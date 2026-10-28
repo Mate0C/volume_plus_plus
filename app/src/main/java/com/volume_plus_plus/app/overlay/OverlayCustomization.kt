@@ -391,6 +391,88 @@ fun OverlayStyle.withAndroid15SheetLight(): OverlayStyle = copy(
     dotColor = A15_SHEET_FILL_LIGHT,
 )
 
+/**
+ * The Android 17 sheet's palette. Dark is sampled off a stock Android 17 sheet (a Pixel 7, which
+ * draws it from the wallpaper's dynamic colours, so another phone's shades differ slightly); light
+ * keeps the Android 15 sheet's light values, which the same Material tones produce there.
+ *
+ * - [A17_SHEET_BG_DARK]: the sheet surface.
+ * - [A17_SHEET_TRACK_DARK]: the track of every row and the Device Settings / Live Caption buttons.
+ * - [A17_SHEET_FILL_DARK]: the fill, the handle bar, the chevron disc, DONE and the SETTINGS outline.
+ * - [A17_SHEET_ON_FILL_DARK]: icons and text over the fill, and DONE's label.
+ * - [A17_SHEET_LABEL_DARK]: the row labels, the header's device name and the footer text.
+ * - [A17_SHEET_CAPTION_DARK]: the header's caption line and the icons over the bare track.
+ */
+const val A17_SHEET_BG_DARK = 0xFF0D0E12.toInt()
+const val A17_SHEET_TRACK_DARK = 0xFF1D1F25.toInt()
+const val A17_SHEET_FILL_DARK = 0xFFBBC6EB.toInt()
+const val A17_SHEET_ON_FILL_DARK = 0xFF1B2744.toInt()
+const val A17_SHEET_LABEL_DARK = 0xFFE4E5EF.toInt()
+const val A17_SHEET_CAPTION_DARK = 0xFFC5C6D0.toInt()
+
+/** Overlay the Android 17 sheet's dark palette onto this base skin style. */
+fun OverlayStyle.withAndroid17SheetDark(): OverlayStyle = copy(
+    containerColor = A17_SHEET_BG_DARK,
+    fillColor = A17_SHEET_FILL_DARK,
+    thumbColor = A17_SHEET_FILL_DARK,
+    trackColor = A17_SHEET_TRACK_DARK,
+    iconTint = A17_SHEET_CAPTION_DARK,
+    textColor = A17_SHEET_LABEL_DARK,
+    accentColor = A17_SHEET_LABEL_DARK,
+    outputSurfaceColor = A17_SHEET_TRACK_DARK,
+    doneBgColor = A17_SHEET_FILL_DARK,
+    doneTextColor = A17_SHEET_ON_FILL_DARK,
+    pillContentOnFill = A17_SHEET_ON_FILL_DARK,
+    pillContentOnTrack = A17_SHEET_CAPTION_DARK,
+    settingsBorderColor = A17_SHEET_FILL_DARK,
+)
+
+/** The light counterpart: the Android 15 sheet's light palette, with the track on the output surface. */
+fun OverlayStyle.withAndroid17SheetLight(): OverlayStyle = withAndroid15SheetLight().copy(
+    outputSurfaceColor = A15_SHEET_TRACK_LIGHT,
+)
+
+/**
+ * The Android 17 collapsed panel's palette, sampled off the stock one: the same near-black card and
+ * pale-blue fill as the sheet, but a lighter track (the panel's own, not the sheet rows').
+ */
+const val A17_PANEL_TRACK_DARK = 0xFF24262D.toInt()
+const val A17_PANEL_RINGER_ICON_DARK = 0xFF353F5D.toInt()
+
+/**
+ * The collapsed panel's palette for [iconSet]. Android 17 takes its own; every other style keeps the
+ * skin's plain colours, which is what its collapsed panel has always drawn.
+ */
+fun OverlayStyle.withPanelPalette(iconSet: IconSet?, dark: Boolean): OverlayStyle = when {
+    iconSet != IconSet.ANDROID_17 -> this
+    // The sheet pins its accent to the label colour (its SETTINGS pill reads it); here the accent is the
+    // pale blue the ringer disc is filled with.
+    dark -> withAndroid17SheetDark().copy(
+        trackColor = A17_PANEL_TRACK_DARK,
+        accentColor = A17_SHEET_FILL_DARK,
+        // The stream's icon in the top of the track is the fill's own pale blue, not the sheet's grey.
+        pillContentOnTrack = A17_SHEET_FILL_DARK,
+        // The ringer disc's icon: a muted navy on the pale blue, not the near-black an automatic contrast
+        // gives.
+        modeIconColor = A17_PANEL_RINGER_ICON_DARK,
+        edgeMarginDp = A17_PANEL_EDGE_DP,
+    )
+    else -> copy(trackColor = A15_SHEET_TRACK_LIGHT, capsuleStickColor = null, edgeMarginDp = A17_PANEL_EDGE_DP)
+}
+
+/** How close the Android 17 collapsed panel sits to the screen's edge. */
+const val A17_PANEL_EDGE_DP = 8
+
+/** How far below the screen's centre the Android 17 collapsed panel sits (stock's is not centred). */
+const val A17_PANEL_DROP_DP = 55f
+
+/** The sheet palette for [iconSet]: Android 17's own, else the Android 15 one 15 and 16 share. */
+fun OverlayStyle.withSheetPalette(iconSet: IconSet?, dark: Boolean): OverlayStyle = when {
+    iconSet == IconSet.ANDROID_17 -> if (dark) withAndroid17SheetDark() else withAndroid17SheetLight()
+    dark -> withAndroid15SheetDark()
+    else -> withAndroid15SheetLight()
+}
+
 /** The current override for [c] (null = using the skin default). */
 fun PanelColors.get(c: EditableColor): Int? = when (c) {
     EditableColor.BACKGROUND -> container

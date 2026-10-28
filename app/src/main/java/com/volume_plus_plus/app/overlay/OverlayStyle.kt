@@ -11,7 +11,7 @@ enum class OverlaySkin(val displayName: String) {
 }
 
 /**
- * For the Android 13–16 skin, which OS revision's volume-panel presentation to mimic:
+ * For the Android 13–17 skin, which OS revision's volume-panel presentation to mimic:
  * - [ANDROID_13]: the classic bell + a single combined "Ring & notification" control.
  * - [ANDROID_14]: the notification stream gets its own slider (split from Ring) with a
  *   megaphone/"sound" ringer icon instead of the bell.
@@ -23,6 +23,10 @@ enum class OverlaySkin(val displayName: String) {
  *   Call row alone, with a round chevron button beside it that unfolds Media, Ring, Notification and
  *   Alarm underneath (Call staying on top, where 15 leaves it in its usual second place), and draws
  *   its "Calling on" card in a grey surface rather than 15's white one.
+ * - [ANDROID_17]: the Material 3 expressive sheet. Each stream is a label over a slider whose handle
+ *   bar stands free of its fill and track; the sheet opens on the Media row alone (the Call row, in
+ *   a call) behind a round chevron that unfolds the rest, names the app playing and the output in
+ *   its header, and offers Device Settings and Live Caption as buttons above the footer.
  * Selected per skin from the overlay settings screen.
  */
 enum class IconSet(val displayName: String) {
@@ -30,6 +34,7 @@ enum class IconSet(val displayName: String) {
     ANDROID_14("Android 14"),
     ANDROID_15("Android 15"),
     ANDROID_16("Android 16"),
+    ANDROID_17("Android 17"),
     ;
 
     /**
@@ -37,7 +42,7 @@ enum class IconSet(val displayName: String) {
      * filled-pill rows and the media-output picker behind it. Android 15 and 16 do; 13 and 14 keep
      * the older sheet. What 16 then does differently *within* that sheet is a call, and only a call.
      */
-    val usesOutputSheet: Boolean get() = this == ANDROID_15 || this == ANDROID_16
+    val usesOutputSheet: Boolean get() = this == ANDROID_15 || this == ANDROID_16 || this == ANDROID_17
 }
 
 /**
@@ -93,6 +98,12 @@ enum class SliderRender {
      * to contain it) and a small trailing dot — the Android 15 "Sound & vibration" sheet rows.
      */
     PILL_LABEL,
+    /**
+     * A horizontal pill track parted by a free-standing vertical handle bar: the fill before it, the
+     * track after it, a small gap either side, and the stream's icon in the track's far end — the
+     * Android 17 sheet rows.
+     */
+    HANDLE,
 }
 
 /**

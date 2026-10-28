@@ -543,6 +543,14 @@ open class Strings {
     open val panelCallingOn get() = "Calling on"
     open val panelConnectADevice get() = "Connect a device"
 
+    /** The Android 17 sheet's header: what is playing, and where, in place of the card's caption. */
+    open val panelMediaWillPlayOn get() = "Media will play on"
+    open fun panelPlayingOn(app: String) = "Playing $app on"
+
+    /** The two buttons of the Android 17 sheet, above its footer. */
+    open val panelDeviceSettings get() = "Device Settings"
+    open val panelLiveCaption get() = "Live Caption"
+
     /** Media card (output picker): the remote ("cast") session's own volume row. */
     open val panelCastVolume get() = "Cast volume"
     open val outputThisPhone get() = "This phone"

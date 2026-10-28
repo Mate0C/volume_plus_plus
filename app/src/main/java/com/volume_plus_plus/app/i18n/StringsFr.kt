@@ -229,6 +229,25 @@ object FrenchStrings : Strings() {
             "amplification en cours.\n\n" +
             "Chaque palier de 5 points correspond à 1,5 dB de gain visé, pas à un pourcentage " +
             "linéaire d'amplitude. L'augmentation réelle dépend de l'appareil et du son."
+    override val overlayAppBoost get() = "Amplificateur de volume par appli"
+    override fun overlayAppBoostDetail(maxPercent: Int) =
+        "Laisse de la place sur le curseur de chaque appli après 100 %, jusqu'à ${percent(maxPercent)}."
+    override fun overlayAppBoostInfo(gainMillibels: Int) =
+        "L'amplificateur ajoute jusqu'à ${boostDecibels(gainMillibels)} dB de gain à une appli, " +
+            "en plus d'un volume déjà à 100 %, grâce à un effet de sonie sur l'audio de cette appli. " +
+            "Il aide les sons faibles : une vidéo discrète, un podcast, un appel. Une musique " +
+            "masterisée à pleine échelle n'a plus de marge : elle ne monte presque pas et peut " +
+            "sonner écrasée.\n\n" +
+            "Faites attention avec un casque : une écoute prolongée à volume amplifié peut abîmer " +
+            "l'audition. L'amplification s'annule d'elle-même dès que vous repassez sous 100 % ou " +
+            "changez de sortie audio, et n'est pas mémorisée d'une lecture à l'autre. Elle nécessite " +
+            "Shizuku ou root."
+    override val overlayAppBoostLimit get() = "Amplification maximale par appli"
+    override val overlayAppBoostLimitInfo get() =
+        "Fixe le plafond, pas l'amplification actuelle : la place après 100 % sur le curseur d'une " +
+            "appli s'arrête ici. Le baisser limite aussitôt une amplification en cours.\n\n" +
+            "Chaque palier de 5 points correspond à 1,5 dB de gain visé, pas à un pourcentage " +
+            "linéaire d'amplitude. L'augmentation réelle dépend de l'appareil et du son."
     override val overlayRememberAppVolumes get() = "Mémoriser le volume de chaque appli"
     override val overlayRememberAppVolumesDetail get() =
         "Une appli joue au niveau que vous lui avez donné la dernière fois au lieu de repartir au " +

@@ -198,6 +198,8 @@ private fun OverlaySetup(
     var rememberAppVolumes by remember { mutableStateOf(prefs.isRememberAppVolumesEnabled()) }
     var mediaBoost by remember { mutableStateOf(prefs.isMediaBoostEnabled()) }
     var mediaBoostMaxSteps by remember { mutableIntStateOf(prefs.getMediaBoostMaxSteps()) }
+    var appBoost by remember { mutableStateOf(prefs.isAppBoostEnabled()) }
+    var appBoostMaxSteps by remember { mutableIntStateOf(prefs.getAppBoostMaxSteps()) }
     var boostAvailable by remember {
         mutableStateOf(MediaBooster.availability != MediaBooster.Availability.UNAVAILABLE)
     }
@@ -245,6 +247,8 @@ private fun OverlaySetup(
         rememberAppVolumes = prefs.isRememberAppVolumesEnabled()
         mediaBoost = prefs.isMediaBoostEnabled()
         mediaBoostMaxSteps = prefs.getMediaBoostMaxSteps()
+        appBoost = prefs.isAppBoostEnabled()
+        appBoostMaxSteps = prefs.getAppBoostMaxSteps()
         // The user may have just set Shizuku or root up on the Mixing tab, which can turn a device
         // that couldn't boost into one that can.
         MediaBooster.refreshAvailability()
@@ -457,6 +461,38 @@ private fun OverlaySetup(
                 mediaBoostMaxSteps = limit
                 prefs.setMediaBoostMaxSteps(limit)
                 MediaBooster.setMaxSteps(limit)
+            },
+        )
+        // Its own switch, apart from the media booster: the two stack, so each is a separate yes.
+        // Greyed with the system-panel switch, since the boost lives on the sliders of our panel.
+        SettingSwitch(
+            title = s.overlayAppBoost,
+            subtitle = s.overlayAppBoostDetail(BoostPolicy.percent(appBoostMaxSteps)),
+            info = s.overlayAppBoostInfo(BoostPolicy.gain(appBoostMaxSteps)),
+            checked = appBoost,
+            enabled = styleEnabled,
+            onCheckedChange = {
+                appBoost = it
+                prefs.setAppBoostEnabled(it)
+            },
+        )
+        SettingSlider(
+            title = s.overlayAppBoostLimit,
+            value = BoostPolicy.percent(appBoostMaxSteps) / 100f,
+            valueRange = (BoostPolicy.percent(BoostPolicy.MIN_MAX_STEPS) / 100f)..
+                (BoostPolicy.percent(BoostPolicy.HARD_MAX_STEPS) / 100f),
+            steps = BoostPolicy.HARD_MAX_STEPS - BoostPolicy.MIN_MAX_STEPS - 1,
+            valueText = s.overlayMediaBoostValue(
+                BoostPolicy.percent(appBoostMaxSteps), BoostPolicy.gain(appBoostMaxSteps),
+            ),
+            info = s.overlayAppBoostLimitInfo,
+            enabled = styleEnabled && appBoost,
+            onValueChange = { value ->
+                val limit = BoostPolicy.normalizeMaxSteps(
+                    ((value * 100 - 100) / BoostPolicy.PERCENT_PER_STEP).roundToInt(),
+                )
+                appBoostMaxSteps = limit
+                prefs.setAppBoostMaxSteps(limit)
             },
         )
         SettingSwitch(

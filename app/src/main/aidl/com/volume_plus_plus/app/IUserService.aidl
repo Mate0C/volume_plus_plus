@@ -121,4 +121,17 @@ interface IUserService {
      * Returns true on success.
      */
     boolean setSessionVolume(in Bundle session, int level) = 13;
+
+    /**
+     * Gain for one app, on top of whatever its player volume is: a loudness effect attached to the
+     * audio session of the player {@code piid}, so only that app gets louder, unlike
+     * {@link #setLoudnessGain}, which lifts everything. A gain of 0 releases the effect. Effects are
+     * kept per session (an app's players usually share one) and any whose session has gone are
+     * dropped on the next call. Returns "" on success, otherwise a diagnostic beginning with "ERROR".
+     */
+    String setPlayerBoost(int piid, int gainMillibels) = 14;
+
+    /** Releases every per-app boost. The gain lives in the audio server, so it has to be taken down
+     *  explicitly when the panel goes away. */
+    void releasePlayerBoosts() = 15;
 }

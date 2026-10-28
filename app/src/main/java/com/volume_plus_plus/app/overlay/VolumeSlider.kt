@@ -21,6 +21,8 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import androidx.core.content.ContextCompat
 import com.volume_plus_plus.app.R
+import com.volume_plus_plus.app.audio.BoostPolicy
+import com.volume_plus_plus.app.audio.BoostTrack
 import com.volume_plus_plus.app.i18n.Localization
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -46,7 +48,7 @@ class VolumeSlider(
     private val style: OverlayStyle,
     private val icon: Drawable?,
     private val glyph: String?,
-    private val label: String?,
+    label: String?,
     chevron: ChevronDir,
     private val orientation: SliderOrientation = style.orientation,
     private val fill: Boolean = style.stretch,
@@ -189,11 +191,14 @@ class VolumeSlider(
     private val drawnIcon: Drawable?
         get() = if (isMutedLevel()) mutedIcon else icon
 
-    /** Current fill fraction, 0f (empty) .. 1f (full). */
+    /**
+     * Current volume, 0f (empty) .. 1f (full). On a slider with room for a boost, full is the 100%
+     * mark rather than the end of the track; [setLevels] is how a boost past it is set.
+     */
     var level: Float
-        get() = drawnLevel
+        get() = track.volumeAt(drawnLevel)
         set(value) {
-            setLevelInternal(value.coerceIn(0f, 1f), animate = !draggingLevel)
+            setLevels(value, 0)
         }
 
     /**
@@ -228,6 +233,56 @@ class VolumeSlider(
      * dim the sibling rows for the duration of the gesture. Set after construction.
      */
     var onDragStateChange: ((Boolean) -> Unit)? = null
+
+    /**
+     * How many boost notches the track has room for after its 100% mark; 0, the default, is a plain
+     * slider with no room and no mark. Only a horizontal [LINE_THUMB] or [PILL_LABEL] row (the shapes
+     * an app row takes) can carry it, since those are the ones that draw the mark.
+     *
+     * The track becomes one scale in percent — volume up to 100, boost after it — so the mark moves
+     * in as the ceiling rises. See [BoostTrack] for the arithmetic.
+     */
+    var boostMaxSteps: Int = 0
+        set(value) {
+            val steps = if (!vertical && (lineThumb || pillLabel)) value.coerceAtLeast(0) else 0
+            if (field == steps) return
+            // Keep the volume and the boost where they were across the rescale of the track.
+            val volume = level
+            val boost = boostSteps
+            field = steps
+            track = BoostTrack(steps)
+            setLevels(volume, boost)
+        }
+    private var track = BoostTrack(0)
+
+    /** Called when a drag moves the boost to a different notch, 0 meaning none. */
+    var onBoostChange: ((Int) -> Unit)? = null
+
+    /** The boost notches the bar currently sits on, 0 when it is at or below the 100% mark. */
+    val boostSteps: Int get() = track.stepsAt(drawnLevel)
+
+    /** True while a finger is moving this slider. */
+    val isDragging: Boolean get() = draggingLevel
+
+    /** Colour of the fill past the 100% mark, so boost reads as different from volume. */
+    var boostColor: Int = BOOST_COLOR
+        set(value) {
+            field = value
+            boostPaint.color = value
+            invalidate()
+        }
+    private val boostPaint = Paint(Paint.ANTI_ALIAS_FLAG).also { it.color = BOOST_COLOR }
+
+    /**
+     * The row's label, swappable after construction so a row can say more than its name (an app
+     * showing the boost it is under). Swapping to or from `null` after layout isn't supported — the
+     * label reserves its own band of height — so only change text that is already there.
+     */
+    var label: String? = label
+        set(value) {
+            field = value
+            invalidate()
+        }
 
     /**
      * The trailing expand/collapse chevron's direction. Mutable so a panel can flip it (DOWN⇄UP)
@@ -367,8 +422,8 @@ class VolumeSlider(
         // Keep Android 15's leading circular indicator visible at mute, then grow proportionally from
         // that base so 1%, 2%, 3%... and 97–100% remain visually distinct.
         val baseCircle = h
-        val fillEnd = baseCircle + (w - baseCircle) * level
-        val nonZeroExtra = if (level > 0.001f) dp(minNonZeroFillExtraDp) else 0f
+        val fillEnd = baseCircle + (w - baseCircle) * drawnLevel
+        val nonZeroExtra = if (drawnLevel > 0.001f) dp(minNonZeroFillExtraDp) else 0f
         val fillRight = (fillEnd + nonZeroExtra).coerceIn(0f, w)
         // A square-fill pill draws its leading edge flat (radius 0); it's still clipped to the rounded
         // track below, so the outer corners stay rounded and only the growing edge reads straight.
@@ -382,7 +437,16 @@ class VolumeSlider(
         clipPath.addRoundRect(bounds, trackRadius, trackRadius, Path.Direction.CW)
         canvas.clipPath(clipPath)
         canvas.drawRoundRect(0f, 0f, fillRight, h, fillRadius, fillRadius, fillPaint)
+        // Past the 100% mark the same fill carries on in the boost colour, cut at the mark.
+        val markX = baseCircle + (w - baseCircle) * track.fullAt
+        if (track.maxSteps > 0 && fillRight > markX) {
+            canvas.save()
+            canvas.clipRect(markX, 0f, w, h)
+            canvas.drawRoundRect(0f, 0f, fillRight, h, fillRadius, fillRadius, boostPaint)
+            canvas.restore()
+        }
         canvas.restore()
+        if (track.maxSteps > 0) drawMark(canvas, markX, h * 0.27f, h * 0.73f, if (fillRight >= markX) onFill else onTrack)
 
         // Trailing dot near the end (Android 15's per-row affordance). An explicit dotColor override
         // pins it to that exact colour on both fill and track; otherwise it follows the on-backing
@@ -442,7 +506,9 @@ class VolumeSlider(
                 pillLabelPaint.color = if (overFillLead) onFill else onTrack
                 pillLabelPaint.alpha = (dragProgress * 255).roundToInt()
                 canvas.drawText(
-                    Localization.strings.percent((level * 100).roundToInt()),
+                    Localization.strings.percent(
+                        if (boostSteps > 0) BoostPolicy.percent(boostSteps) else (level * 100).roundToInt(),
+                    ),
                     leadCx, percentBaseline, pillLabelPaint,
                 )
                 pillLabelPaint.alpha = 255
@@ -532,7 +598,7 @@ class VolumeSlider(
         // with level so every increment, including edge steps, has a distinct position.
         val r = w / 2f
         val travel = (h - 2f * r).coerceAtLeast(0f)
-        val headCy = h - r - (travel * level)
+        val headCy = h - r - (travel * drawnLevel)
         val top = headCy - r
         canvas.drawRoundRect(0f, top, w, h, r, r, fillPaint)
 
@@ -556,8 +622,8 @@ class VolumeSlider(
         canvas.save()
         canvas.clipPath(clipPath)
         canvas.drawRect(bounds, trackPaint)
-        if (vertical) canvas.drawRect(0f, h * (1f - level), w, h, fillPaint)
-        else canvas.drawRect(0f, 0f, w * level, h, fillPaint)
+        if (vertical) canvas.drawRect(0f, h * (1f - drawnLevel), w, h, fillPaint)
+        else canvas.drawRect(0f, 0f, w * drawnLevel, h, fillPaint)
         canvas.restore()
 
         drawEdgeIcon(canvas, w, h)
@@ -581,14 +647,15 @@ class VolumeSlider(
         thumbPaint.color = if (inactive) style.inactiveColor else style.thumbColor
         val h = height.toFloat()
         // Label sits at the top; the icon + track + thumb live in the zone below it.
-        if (label != null) {
+        val labelText = label
+        if (labelText != null) {
             // The label may span the whole row (up to the track's right edge, before the chevron),
             // not just the narrow icon column. Centre it over the icon when it fits, but slide it
             // inward so it never runs past either edge; ellipsize only if still too wide.
             val leftEdge = dp(6f)
             val rightEdge = trackRight()
             val text = TextUtils
-                .ellipsize(label, labelPaint, rightEdge - leftEdge, TextUtils.TruncateAt.END)
+                .ellipsize(labelText, labelPaint, rightEdge - leftEdge, TextUtils.TruncateAt.END)
                 .toString()
             val half = labelPaint.measureText(text) / 2f
             val minCx = leftEdge + half
@@ -605,8 +672,17 @@ class VolumeSlider(
         // Track line.
         canvas.drawRoundRect(left, cy - lineH / 2f, right, cy + lineH / 2f, lineH, lineH, trackPaint)
         // Filled portion up to the thumb.
-        val thumbX = left + (right - left) * level
-        canvas.drawRoundRect(left, cy - lineH / 2f, thumbX, cy + lineH / 2f, lineH, lineH, fillPaint)
+        val thumbX = left + (right - left) * drawnLevel
+        val markX = left + (right - left) * track.fullAt
+        val volumeEnd = if (track.maxSteps > 0) minOf(thumbX, markX) else thumbX
+        canvas.drawRoundRect(left, cy - lineH / 2f, volumeEnd, cy + lineH / 2f, lineH, lineH, fillPaint)
+        if (track.maxSteps > 0) {
+            // The stretch past the 100% mark, in the boost colour, and the mark itself.
+            if (thumbX > markX) {
+                canvas.drawRoundRect(markX, cy - lineH / 2f, thumbX, cy + lineH / 2f, lineH, lineH, boostPaint)
+            }
+            drawMark(canvas, markX, cy - dp(8f), cy + dp(8f), style.iconTint)
+        }
         // Ripple halo behind the thumb while this row is the one being dragged.
         if (pressedHalo && dragging && sliderEnabled) canvas.drawCircle(thumbX, cy, dp(15f), haloPaint)
         // Thumb: a filled circle normally; locked rows collapse it to a small hollow ring (the
@@ -634,10 +710,20 @@ class VolumeSlider(
         val lineW = dp(2f)
 
         canvas.drawRoundRect(cx - lineW / 2f, top, cx + lineW / 2f, bottom, lineW, lineW, trackPaint)
-        val thumbY = bottom - (bottom - top) * level
+        val thumbY = bottom - (bottom - top) * drawnLevel
         canvas.drawRoundRect(cx - lineW / 2f, thumbY, cx + lineW / 2f, bottom, lineW, lineW, fillPaint)
         canvas.drawCircle(cx, thumbY, dp(7f), thumbPaint)
     }
+
+    /** The tick that marks 100% on a track with room for a boost: [x], from [top] to [bottom]. */
+    private fun drawMark(canvas: Canvas, x: Float, top: Float, bottom: Float, color: Int) {
+        markPaint.color = color
+        markPaint.alpha = MARK_ALPHA
+        val half = dp(1f)
+        canvas.drawRoundRect(x - half, top, x + half, bottom, half, half, markPaint)
+    }
+
+    private val markPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     // The material expand_less/expand_more glyphs — the caret the real Android 7–8 panel used —
     // tinted like the row icons. Lazy: only rows that actually carry a chevron load them.
@@ -836,14 +922,33 @@ class VolumeSlider(
             vertical -> 1f - event.y / height
             else -> event.x / width
         }
-        val clamped = newLevel.coerceIn(0f, 1f)
+        // With room for a boost the finger's position is a spot on the whole track; it comes to rest
+        // on a notch past the 100% mark, and sticks to the mark just short of it.
+        val clamped = if (track.maxSteps > 0) track.snap(newLevel) else newLevel.coerceIn(0f, 1f)
         // Compared against the target, not the drawn level: the bar is allowed to trail behind the
         // finger, and the volume itself must still follow the finger exactly — only the drawing is
         // smoothed.
         if (clamped != targetLevel) {
+            val before = targetLevel
             setLevelInternal(clamped, animate = true)
-            onLevelChange(clamped)
+            if (track.maxSteps <= 0) {
+                onLevelChange(clamped)
+                return
+            }
+            // The volume first, so a boost is never reported against a volume still short of full.
+            val volume = track.volumeAt(clamped)
+            if (volume != track.volumeAt(before)) onLevelChange(volume)
+            val steps = track.stepsAt(clamped)
+            if (steps != track.stepsAt(before)) onBoostChange?.invoke(steps)
         }
+    }
+
+    /**
+     * Put the bar at [volume] (0..1) with [boost] notches past the 100% mark, the way a panel does
+     * when it builds a row or catches up with a change that didn't come from this finger.
+     */
+    fun setLevels(volume: Float, boost: Int) {
+        setLevelInternal(track.positionOf(volume, boost), animate = !draggingLevel)
     }
 
     private fun setLevelInternal(target: Float, animate: Boolean) {
@@ -872,5 +977,11 @@ class VolumeSlider(
          *  follow speed. 200% doubles it to 1 — the bar sits exactly under the finger — and 50%
          *  halves it into a visible, smooth trail. */
         const val DRAG_FOLLOW_GAIN = 0.5f
+
+        /** Amber, so the stretch past 100% reads as different from volume on every skin's palette. */
+        const val BOOST_COLOR = 0xFFFFA726.toInt()
+
+        /** The 100% tick is drawn faint enough to sit quietly on a track, strong enough to find. */
+        const val MARK_ALPHA = 170
     }
 }

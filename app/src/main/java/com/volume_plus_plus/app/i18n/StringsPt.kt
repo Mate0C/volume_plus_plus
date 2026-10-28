@@ -227,6 +227,23 @@ object PortugueseStrings : Strings() {
             "volume para aumentar o reforço. Diminuí-lo limita na hora um reforço ativo.\n\n" +
             "Cada 5 pontos percentuais representam 1,5 dB de ganho alvo, não uma porcentagem " +
             "linear de amplitude. O aumento real depende do dispositivo e do áudio."
+    override val overlayAppBoost get() = "Reforço de volume por app"
+    override fun overlayAppBoostDetail(maxPercent: Int) =
+        "Deixa espaço no controle de cada app depois de 100%, até ${percent(maxPercent)}."
+    override fun overlayAppBoostInfo(gainMillibels: Int) =
+        "O reforço adiciona até ${boostDecibels(gainMillibels)} dB de ganho a um app, sobre um " +
+            "volume que já está em 100%, por meio de um efeito de sonoridade no áudio desse app. Ele " +
+            "ajuda com som baixo: um vídeo suave, um podcast, uma chamada. Música masterizada em " +
+            "escala máxima não tem folga, então quase não fica mais alta e pode soar achatada.\n\n" +
+            "Cuidado com fones de ouvido: ouvir por muito tempo em volume reforçado pode prejudicar a " +
+            "audição. O reforço se desfaz sozinho quando você baixa de 100% ou troca a saída de " +
+            "áudio, e não é lembrado entre reproduções. Precisa de Shizuku ou root."
+    override val overlayAppBoostLimit get() = "Reforço máximo por app"
+    override val overlayAppBoostLimitInfo get() =
+        "Define o teto, não o reforço atual: o espaço depois de 100% no controle de um app termina " +
+            "aqui. Diminuí-lo limita na hora um reforço ativo.\n\n" +
+            "Cada 5 pontos percentuais representam 1,5 dB de ganho alvo, não uma porcentagem " +
+            "linear de amplitude. O aumento real depende do dispositivo e do áudio."
     override val overlayRememberAppVolumes get() = "Lembrar o volume de cada app"
     override val overlayRememberAppVolumesDetail get() =
         "Um app toca no nível que você deu a ele da última vez, em vez de começar no máximo. " +

@@ -223,6 +223,24 @@ object SpanishStrings : Strings() {
             "activa.\n\n" +
             "Cada 5 puntos porcentuales equivalen a 1,5 dB de ganancia objetivo, no a un porcentaje " +
             "lineal de amplitud. El aumento real depende del dispositivo y del audio."
+    override val overlayAppBoost get() = "Amplificador de volumen por app"
+    override fun overlayAppBoostDetail(maxPercent: Int) =
+        "Deja espacio en el control de cada app después del 100%, hasta ${percent(maxPercent)}."
+    override fun overlayAppBoostInfo(gainMillibels: Int) =
+        "El amplificador añade hasta ${boostDecibels(gainMillibels)} dB de ganancia a una app, " +
+            "sobre un volumen que ya está al 100%, mediante un efecto de sonoridad en el audio de " +
+            "esa app. Ayuda con el sonido bajo: un vídeo suave, un pódcast, una llamada. La música " +
+            "masterizada a escala completa no tiene margen, así que apenas suena más fuerte y puede " +
+            "sonar aplastada.\n\n" +
+            "Ten cuidado con los auriculares: escuchar de forma prolongada a volumen amplificado " +
+            "puede dañar el oído. La amplificación se anula sola cuando bajas del 100% o cambias de " +
+            "salida de audio, y no se recuerda entre reproducciones. Necesita Shizuku o root."
+    override val overlayAppBoostLimit get() = "Amplificación máxima por app"
+    override val overlayAppBoostLimitInfo get() =
+        "Fija el límite, no la amplificación actual: el espacio después del 100% en el control de " +
+            "una app termina aquí. Bajarlo limita al momento una amplificación activa.\n\n" +
+            "Cada 5 puntos porcentuales equivalen a 1,5 dB de ganancia objetivo, no a un porcentaje " +
+            "lineal de amplitud. El aumento real depende del dispositivo y del audio."
     override val overlayRememberAppVolumes get() = "Recordar el volumen de cada app"
     override val overlayRememberAppVolumesDetail get() =
         "Cada app suena al nivel que le diste la última vez en lugar de empezar al máximo. Devuelve " +

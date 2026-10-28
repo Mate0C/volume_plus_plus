@@ -26,3 +26,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Volume++"
 include(":app")
+include(":stubs")

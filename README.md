@@ -44,7 +44,10 @@ never individual apps. Volume++ replaces that panel outright and fills in both g
   panel can show one volume slider per currently-playing app (not just per stream) and set that
   app's actual playback volume using a hidden system API, plus toggle whether an app is allowed to
   take audio focus at all — i.e. whether it's allowed to pause everything else when it starts
-  playing, which is what makes true audio mixing between two apps possible.
+  playing, which is what makes true audio mixing between two apps possible. An optional **Smart
+  audio focus** mode does the same job without the side effects: the helper becomes the device's
+  audio-focus arbiter, so mixed apps keep playing together while phone calls, voice prompts and
+  other apps still behave normally.
 - Per-app volume choices are remembered for the life of a playback session and silently
   re-applied as the app's audio players churn (e.g. across screen off/on or backgrounding), so a
   level you set doesn't reset back to full the next time the app makes a sound. They are also
@@ -121,6 +124,12 @@ needs a privileged helper — **Shizuku or root** — and walks you through whic
 with a checklist that ticks itself off as you go. The switches show the app-op's real state, read
 back from the system each time the tab opens, so a change made elsewhere (over ADB, or by another
 tool) shows up here too.
+
+Above the list sits **Smart audio focus**. With it on, the switches choose which apps may be mixed
+and Volume++ decides who gets focus instead of switching focus off for those apps: a call always
+wins and pauses the mix until it ends, a navigation prompt lowers the music (or pauses it, with
+**Pause for voice prompts**), and apps outside the list pause each other as usual. See
+[Smart audio focus](#smart-audio-focus).
 
 It also carries the fix for a side effect of sideloading: a build installed from GitHub records
 whichever browser or file manager opened it as its install source, which some banking apps flag as
@@ -220,6 +229,41 @@ or pause on its behalf.
   control** is on in the Overlay tab. Turn that switch off to re-enable mixing.
 - A privileged helper (Shizuku or root) must be running, since the app's own UID isn't allowed to
   change another app's app-ops.
+
+### Smart audio focus
+
+The plain switches above have a cost: an app whose focus requests are ignored is deaf to *every*
+later request too, so a call or a navigation prompt can't pause or lower it. Smart audio focus
+keeps the mixing and fixes that, by registering the helper as the system's **external audio-focus
+policy**. While it is registered, every focus request on the device is handed to Volume++ to
+answer, using these rules:
+
+- **Mixed apps coexist.** Two apps that are both in the Mixing list and play media or games are
+  granted focus together and neither is told to stop.
+- **Everything else behaves as stock.** A request from an app outside the list pauses the current
+  holders exactly as Android would: a full gain is a permanent loss, a transient gain a temporary
+  one, and the paused apps are resumed when the interrupter lets go.
+- **Calls always win.** Ringing, an active call and voice or video calls take focus from
+  everything, and media requests made during a call are refused (or delayed, if the app allows it)
+  until the call ends.
+- **Prompts lower the music.** A "may duck" request, such as a navigation voice, fades the other
+  players to about 20 % over 300 ms through the same hidden per-player volume API the per-app
+  sliders use, and restores them afterwards. With **Pause for voice prompts** on, the music is
+  paused instead.
+
+Turning it on hands the apps in the list from the app-op to the policy (their `TAKE_AUDIO_FOCUS`
+op is set back to allowed) and turning it off does the reverse. The policy is registered inside
+the helper process, so it ends with it, and Volume++ registers it again whenever the helper
+reconnects.
+
+**Caveats:**
+
+- Apps already holding focus when the policy is switched on aren't known to it until they request
+  focus again, so start playback after enabling it.
+- Android 8 or newer is required. Registering uses a hidden audio-service call that is verified on
+  Android 17 through Shizuku; the root path hosts the same code but has had less testing.
+- Some apps, like Chrome, pause themselves when they leave the foreground, whatever the focus
+  system says. That is the app's own behaviour and mixing can't change it.
 
 ## Shizuku or root
 

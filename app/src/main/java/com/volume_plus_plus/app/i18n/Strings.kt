@@ -119,6 +119,28 @@ open class Strings {
         "To use audio mixing, turn off \"Use system volume control\" in the Overlay settings."
     open val mixingGoToOverlaySettings get() = "Go to Overlay settings"
 
+    // ── Mixing tab: smart audio focus ───────────────────────────────────────────────────────────
+
+    open val focusTitle get() = "Smart audio focus"
+    open val focusSubtitle get() = "Mix the apps below without breaking calls or voice prompts"
+    open val focusInfo get() =
+        "Instead of stopping an app from taking audio focus, Volume++ answers every app's focus " +
+            "request itself. The apps you switch on below play together; everything else behaves as " +
+            "Android normally would. Calls and ringtones always take over, music that tries to start " +
+            "during a call waits for it to end, and a voice prompt such as navigation lowers the music " +
+            "and gives it back. Apps keep their pause and resume controls, so nothing freezes.\n\n" +
+            "Only apps that start playing after you switch this on are managed: restart playback in " +
+            "an app that was already playing."
+    open val focusPauseTitle get() = "Pause for voice prompts"
+    open val focusPauseSubtitle get() = "Pause the music instead of lowering it"
+    open val focusPauseInfo get() =
+        "When a voice prompt speaks over your music, the music normally dips to a lower volume and " +
+            "comes back afterwards. Switch this on to pause it for the prompt instead, so you hear " +
+            "the prompt on its own."
+
+    /** Snackbar when smart audio focus couldn't be switched or updated on this device. */
+    open val focusCouldntChange get() = "Couldn't change smart audio focus on this device"
+
     // ── Mixing tab: setup checklist ─────────────────────────────────────────────────────────────
 
     open val setupIntroRooted get() =

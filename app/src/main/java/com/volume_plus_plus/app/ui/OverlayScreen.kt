@@ -679,7 +679,7 @@ private fun SettingSlider(
  * [info] adds the ⓘ button that explains, in plain words, what the switch actually does.
  */
 @Composable
-private fun SettingSwitch(
+internal fun SettingSwitch(
     title: String,
     subtitle: String,
     checked: Boolean,

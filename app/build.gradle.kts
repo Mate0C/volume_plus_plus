@@ -50,6 +50,8 @@ android {
 }
 
 dependencies {
+    // Hidden-API classes the focus policy has to subclass. Compile-only: the platform's own are used.
+    compileOnly(project(":stubs"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

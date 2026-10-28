@@ -39,10 +39,15 @@ class UserService() : IUserService.Stub() {
     /** The live loudness boost, if one is applied. Held open only while the gain is non-zero. */
     private var enhancer: LoudnessEnhancer? = null
 
+    /** The smart-audio-focus policy, created the first time it is asked for. */
+    private var focusPolicy: FocusPolicyHost? = null
+
     override fun destroy() {
         // Drop the boost before going away. The gain lives in the audio server, not in this
         // process, so leaving it applied would outlast us with no UI left to undo it.
         releaseEnhancer()
+        // Same for anything the focus policy has ducked: the duck is applied inside the apps' players.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusPolicy?.stop()
         exitProcess(0)
     }
 
@@ -313,6 +318,26 @@ class UserService() : IUserService.Stub() {
             false
         }
     }
+
+    /**
+     * Smart audio focus: see [FocusPolicyHost]. The policy needs Android 8, where the pieces it is
+     * built from first appear; anything older is reported like any other failure so the caller can
+     * say the device can't do it.
+     */
+    @Synchronized
+    override fun setFocusPolicy(
+        enabled: Boolean,
+        mixedPackages: List<String>,
+        pauseInsteadOfDuck: Boolean,
+    ): String {
+        val ctx = context ?: return "ERROR: no context"
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return "ERROR: needs Android 8 or newer"
+        val host = focusPolicy ?: FocusPolicyHost(ctx).also { focusPolicy = it }
+        return host.apply(enabled, mixedPackages.toSet(), pauseInsteadOfDuck)
+    }
+
+    override fun isFocusPolicyActive(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && focusPolicy?.isActive == true
 
     private fun releaseEnhancer() {
         runCatching { enhancer?.release() }

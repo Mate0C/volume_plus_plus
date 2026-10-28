@@ -103,6 +103,8 @@ fun MixAudioScreen(
     var query by remember { mutableStateOf("") }
     var hideSystem by remember { mutableStateOf(true) }
     var warningDismissed by remember { mutableStateOf(prefs.isWarningDismissed()) }
+    var smartFocus by remember { mutableStateOf(prefs.isSmartFocusEnabled()) }
+    var pauseForPrompts by remember { mutableStateOf(prefs.isPauseInsteadOfDuck()) }
     var systemVolumePanel by remember { mutableStateOf(overlayPrefs.isSystemVolumePanelEnabled()) }
 
     LaunchedEffect(setup.ready) {
@@ -138,10 +140,12 @@ fun MixAudioScreen(
     // The switches mirror TAKE_AUDIO_FOCUS app-ops, which tools other than this app can also
     // write (ADB, another privileged volume manager). Render the remembered set right away, then
     // correct it from the real op state once the service is up and again on every resume — the
-    // prefs stay a cache of last-known-truth, never the record.
+    // prefs stay a cache of last-known-truth, never the record. Smart audio focus leaves the ops
+    // alone, so there the prefs *are* the record and there is nothing to read back.
     LaunchedEffect(setup.ready, lifecycleOwner) {
         if (!setup.ready) return@LaunchedEffect
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            if (prefs.isSmartFocusEnabled()) return@repeatOnLifecycle
             PrivilegedManager.audioFocusIgnoredPackages()?.let { real ->
                 prefs.setEnabledPackages(real)
                 enabled = real
@@ -193,6 +197,43 @@ fun MixAudioScreen(
                         },
                     )
                 }
+                SettingSwitch(
+                    title = s.focusTitle,
+                    subtitle = s.focusSubtitle,
+                    checked = smartFocus,
+                    info = s.focusInfo,
+                    onCheckedChange = { want ->
+                        scope.launch {
+                            // The policy takes over from the apps' own ops (or hands back to them), so
+                            // the list is passed on first and the ops are swapped only once that took.
+                            if (!PrivilegedManager.setFocusPolicy(want, enabled, pauseForPrompts)) {
+                                snackbar.showSnackbar(s.focusCouldntChange)
+                                return@launch
+                            }
+                            enabled.forEach { PrivilegedManager.setAudioFocusIgnored(it, !want) }
+                            prefs.setSmartFocusEnabled(want)
+                            smartFocus = want
+                        }
+                    },
+                )
+                if (smartFocus) {
+                    SettingSwitch(
+                        title = s.focusPauseTitle,
+                        subtitle = s.focusPauseSubtitle,
+                        checked = pauseForPrompts,
+                        info = s.focusPauseInfo,
+                        onCheckedChange = { want ->
+                            scope.launch {
+                                if (PrivilegedManager.setFocusPolicy(true, enabled, want)) {
+                                    prefs.setPauseInsteadOfDuck(want)
+                                    pauseForPrompts = want
+                                } else {
+                                    snackbar.showSnackbar(s.focusCouldntChange)
+                                }
+                            }
+                        },
+                    )
+                }
                 val filtered = remember(apps, query, hideSystem) {
                     apps.filter { app ->
                         (!hideSystem || !app.isSystem) &&
@@ -203,7 +244,7 @@ fun MixAudioScreen(
                     hideSystem = hideSystem,
                     onChange = { hideSystem = it },
                 )
-                if (!warningDismissed) {
+                if (!warningDismissed && !smartFocus) {
                     WarningBanner(
                         onDismiss = {
                             prefs.setWarningDismissed(true)
@@ -237,8 +278,14 @@ fun MixAudioScreen(
                             isEnabled = enabled.contains(app.packageName),
                             onToggle = { want ->
                                 scope.launch {
-                                    val ok = PrivilegedManager
-                                        .setAudioFocusIgnored(app.packageName, want)
+                                    val ok = if (smartFocus) {
+                                        val updated = enabled.toMutableSet().apply {
+                                            if (want) add(app.packageName) else remove(app.packageName)
+                                        }
+                                        PrivilegedManager.setFocusPolicy(true, updated, pauseForPrompts)
+                                    } else {
+                                        PrivilegedManager.setAudioFocusIgnored(app.packageName, want)
+                                    }
                                     if (ok) {
                                         prefs.setEnabled(app.packageName, want)
                                         enabled = prefs.enabledPackages()

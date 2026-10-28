@@ -86,6 +86,26 @@ object PortugueseStrings : Strings() {
             "configurações do painel."
     override val mixingGoToOverlaySettings get() = "Ir às configurações do painel"
 
+    // ── foco de áudio inteligente ───────────────────────────────────────────────────────────────
+
+    override val focusTitle get() = "Foco de áudio inteligente"
+    override val focusSubtitle get() = "Misture os apps abaixo sem atrapalhar chamadas nem avisos de voz"
+    override val focusInfo get() =
+        "Em vez de impedir que um app tome o foco de áudio, o Volume++ responde ele mesmo a cada " +
+            "pedido de foco. Os apps ativados abaixo tocam juntos; todo o resto se comporta como o " +
+            "Android faria. Chamadas e toques sempre têm prioridade, a música que tenta começar " +
+            "durante uma chamada espera ela terminar, e um aviso de voz como a navegação abaixa a " +
+            "música e a devolve. Os apps mantêm seus controles de pausar e retomar, então nada " +
+            "trava.\n\n" +
+            "Só os apps que começam a tocar depois de ativar isto são gerenciados: reinicie a " +
+            "reprodução em um app que já estava tocando."
+    override val focusPauseTitle get() = "Pausar nos avisos de voz"
+    override val focusPauseSubtitle get() = "Pausa a música em vez de abaixá-la"
+    override val focusPauseInfo get() =
+        "Quando um aviso de voz fala por cima da sua música, ela costuma baixar de volume e voltar " +
+            "depois. Ative para pausá-la durante o aviso e ouvi-lo sozinho."
+    override val focusCouldntChange get() = "Não foi possível alterar o foco de áudio inteligente neste dispositivo"
+
     // ── lista de configuração ───────────────────────────────────────────────────────────────────
 
     override val setupIntroRooted get() =

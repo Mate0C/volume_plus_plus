@@ -121,4 +121,20 @@ interface IUserService {
      * Returns true on success.
      */
     boolean setSessionVolume(in Bundle session, int level) = 13;
+
+    /**
+     * Turns smart audio focus on or off, or updates it while on. On, this process registers as the
+     * device's external audio-focus policy: every app's focus request comes here instead of being
+     * decided by the platform, and apps in {@code mixedPackages} are let play over each other where
+     * stock Android would pause one of them, while calls, ringtones and voice prompts still win. Off,
+     * the policy is unregistered and the platform is back in charge. Idempotent, so it doubles as
+     * "here is the current list". {@code pauseInsteadOfDuck} turns the ducking a voice prompt asks for
+     * into a pause. The policy is a Binder callback of this process, so it also ends with it.
+     * Returns "" on success, otherwise a diagnostic beginning with "ERROR" (an old platform, or one
+     * that refuses the registration even from here).
+     */
+    String setFocusPolicy(boolean enabled, in List<String> mixedPackages, boolean pauseInsteadOfDuck) = 14;
+
+    /** Whether the focus policy is registered right now. Read back, never assumed. */
+    boolean isFocusPolicyActive() = 15;
 }

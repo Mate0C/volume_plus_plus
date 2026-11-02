@@ -454,6 +454,10 @@ object FrenchStrings : Strings() {
 
     override val panelAudioWillPlayOn get() = "L'audio sera lu sur"
     override val panelCallingOn get() = "Appel sur"
+    override val panelMediaWillPlayOn get() = "Le média sera lu sur"
+    override fun panelPlayingOn(app: String) = "Lecture de $app sur"
+    override val panelDeviceSettings get() = "Paramètres de l'appareil"
+    override val panelLiveCaption get() = "Sous-titres instantanés"
     override val panelConnectADevice get() = "Connecter un appareil"
     override val panelCastVolume get() = "Volume de diffusion"
     override val outputThisPhone get() = "Ce téléphone"

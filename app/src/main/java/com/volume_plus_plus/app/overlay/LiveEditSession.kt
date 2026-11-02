@@ -868,10 +868,12 @@ class LiveEditSession(
     /** The style a swatch's *default* seeds from. The Android 15 expanded sheet swaps in its own
      *  reference palette (matching the renderer's [buildStyle]) so its chips show the colours actually
      *  drawn; every other component seeds from the plain skin style. */
-    private fun seedBaseStyle(): OverlayStyle =
-        if (config.component == PanelComponent.EXPANDED && version.iconSet?.usesOutputSheet == true)
-            if (dark) baseStyle.withAndroid15SheetDark() else baseStyle.withAndroid15SheetLight()
-        else baseStyle
+    private fun seedBaseStyle(): OverlayStyle = when {
+        config.component == PanelComponent.EXPANDED && version.iconSet?.usesOutputSheet == true ->
+            baseStyle.withSheetPalette(version.iconSet, dark)
+        config.component == PanelComponent.MAIN -> baseStyle.withPanelPalette(version.iconSet, dark)
+        else -> baseStyle
+    }
 
     private fun selectColor(c: EditableColor) {
         // Close the field *before* the selection moves. Dropping focus commits whatever is in it,

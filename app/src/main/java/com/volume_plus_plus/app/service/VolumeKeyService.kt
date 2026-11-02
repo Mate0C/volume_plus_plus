@@ -1,7 +1,10 @@
 package com.volume_plus_plus.app.service
 
 import android.accessibilityservice.AccessibilityService
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +14,7 @@ import android.os.Vibrator
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
+import androidx.core.content.ContextCompat
 import com.volume_plus_plus.app.overlay.AppVolumeController
 import com.volume_plus_plus.app.overlay.MediaBooster
 import com.volume_plus_plus.app.overlay.OverlayController
@@ -148,8 +152,37 @@ class VolumeKeyService : AccessibilityService() {
         powerUpAt = 0L
     }
 
+    /**
+     * The panel goes the moment the screen does, which is when the phone locks. Nothing else takes it
+     * down at that point: its own timer would leave it showing over the lock screen or the dimmed
+     * always-on display for the rest of its few seconds.
+     */
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            releaseHold()
+            overlay?.hide()
+        }
+    }
+    private var screenOffRegistered = false
+
+    private fun watchScreenOff() {
+        if (screenOffRegistered) return
+        ContextCompat.registerReceiver(
+            this, screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        screenOffRegistered = true
+    }
+
+    private fun unwatchScreenOff() {
+        if (!screenOffRegistered) return
+        runCatching { unregisterReceiver(screenOffReceiver) }
+        screenOffRegistered = false
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
+        watchScreenOff()
         // The setup checklist's most authoritative answer about this service: we are connected, so
         // it is enabled, whatever the platform happens to have written into Secure settings. Told
         // first, so the tick appears while the user is still standing on the Settings screen.
@@ -216,6 +249,16 @@ class VolumeKeyService : AccessibilityService() {
         val isVolumeKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
             event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
         if (!isVolumeKey) return super.onKeyEvent(event)
+
+        // With the display off, or dozing on the always-on display, the keys are the platform's to
+        // handle (it adjusts whatever music is playing) and a panel drawn over the dimmed screen
+        // would be wrong anyway. Some builds, Android 17 among them, still deliver the key to an
+        // accessibility service in that state, and consuming it here is what stopped the volume
+        // changing at all: so stand aside, and let the platform treat it as it would without us.
+        if (!powerManager.isInteractive) {
+            releaseHold()
+            return super.onKeyEvent(event)
+        }
 
         // The user asked for Android's built-in volume control, so don't consume the keys — the
         // system panel handles them exactly as it would without this app. Read live (the setting can
@@ -294,11 +337,13 @@ class VolumeKeyService : AccessibilityService() {
     /** A build that tears the service down without unbinding it first still has to stop claiming
      *  the service is connected. */
     override fun onDestroy() {
+        unwatchScreenOff()
         Permissions.onServiceDisconnected()
         super.onDestroy()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        unwatchScreenOff()
         // Symmetrical with onServiceConnected: the checklist must untick the moment the service is
         // switched off, not on the next time something happens to re-read the setting.
         Permissions.onServiceDisconnected()

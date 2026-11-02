@@ -1,6 +1,7 @@
 package com.volume_plus_plus.app.overlay
 
 import android.animation.LayoutTransition
+import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
@@ -4583,11 +4584,14 @@ class OverlayController(
         system && !updated
     }.getOrDefault(true)
 
-    private fun overlayType(): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else
-            @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+    private fun overlayType(): Int = when {
+        // From the accessibility service the panel is an accessibility overlay: unlike an application
+        // overlay, which the keyguard hides, it stays on screen over the lock screen, so a volume key
+        // pressed there still shows its slider.
+        context is AccessibilityService -> WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else -> @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+    }
 
     private companion object {
         const val AUTO_HIDE_MS = 4000L

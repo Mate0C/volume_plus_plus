@@ -487,6 +487,10 @@ object PortugueseStrings : Strings() {
 
     override val panelAudioWillPlayOn get() = "O áudio será reproduzido em"
     override val panelCallingOn get() = "Chamando em"
+    override val panelMediaWillPlayOn get() = "A mídia será reproduzida em"
+    override fun panelPlayingOn(app: String) = "Reproduzindo $app em"
+    override val panelDeviceSettings get() = "Configurações do dispositivo"
+    override val panelLiveCaption get() = "Legenda instantânea"
     override val panelConnectADevice get() = "Conectar um dispositivo"
     override val panelCastVolume get() = "Volume da transmissão"
     override val outputThisPhone get() = "Este telefone"

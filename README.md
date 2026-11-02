@@ -26,11 +26,12 @@ never individual apps. Volume++ replaces that panel outright and fills in both g
   captures volume-up/volume-down presses before the system does, suppresses the stock panel, and
   draws its own floating overlay instead — with the same press-and-hold ramping behavior as the
   real thing.
-- **Faithful recreations of every major Android volume-panel design, Android 7 through 16.**
+- **Faithful recreations of every major Android volume-panel design, Android 7 through 17.**
   The overlay isn't one fixed look — it can render the classic Android 7/8 top sheet, the
   Android 9–11 collapsed-edge-control-plus-"Sound"-sheet layout, Material You's Android 12 panel,
-  and the Android 13/14/15/16 "Sound & vibration" sheet (including Android 15's redesigned
-  "Audio will play on" media-output picker, and Android 16's call-folded take on it). You pick
+  the Android 13/14/15/16 "Sound & vibration" sheet (including Android 15's redesigned
+  "Audio will play on" media-output picker, and Android 16's call-folded take on it) and Android
+  17's expressive sheet. You pick
   which version's panel you want, independent of the Android version actually installed on the
   device.
 - **A live, on-screen WYSIWYG editor** for repositioning every panel component (main panel,
@@ -76,12 +77,18 @@ never individual apps. Volume++ replaces that panel outright and fills in both g
 - **Four languages**, picked in the app or followed from the device: English, Español, Português
   and Français.
 
-## The volume panel, Android 7 → 16
+## The volume panel, Android 7 → 17
 
-One app, ten panels. Each one is picked in **Overlay → Style**, and each keeps its own position
+One app, eleven panels. Each one is picked in **Overlay → Style**, and each keeps its own position
 and its own colors, so switching between them doesn't disturb anything you've set up on the others.
 The grid below shows nine of them: Android 16 is Android 15 to look at, and parts company with it
 only once a call is in progress.
+Android 17 is the exception to that: its expanded sheet is its own, with handle-bar sliders under
+their labels, a header that names what is playing and where, the Media row alone behind a chevron
+that unfolds the rest (the per-app sliders stay out in the open), and Device Settings and Live
+Caption buttons above the footer. Its collapsed panel follows the same look: a handle line parting
+the fill from the track, the stream's icon at the top of the track, and a tune button under Live
+Caption in place of the three dots.
 
 *(Every shot below comes from one Android 9 device running one build of Volume++. The panel style
 is the app's, not the system's — which is the whole point.)*

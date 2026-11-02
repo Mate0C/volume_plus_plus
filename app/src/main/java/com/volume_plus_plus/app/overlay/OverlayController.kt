@@ -17,6 +17,7 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.app.NotificationManager
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
@@ -222,11 +223,11 @@ class OverlayController(
         val base = styleFor(curSkin(), isDark())
         val themed = when {
             expanded && isAndroid15Sheet() -> {
-                val sheet = if (isDark()) base.withAndroid15SheetDark() else base.withAndroid15SheetLight()
+                val sheet = base.withSheetPalette(curIconSet(), isDark())
                 // Android 16 greys the card while a call is up; 15 keeps the sheet's white one.
                 if (isAndroid16() && callPanel()) sheet.withAndroid16CallCard(isDark()) else sheet
             }
-            else -> base
+            else -> base.withPanelPalette(curIconSet().takeIf { curSkin() == OverlaySkin.ANDROID_13_14 }, isDark())
         }
         return themed.applyColors(activeColors())
     }
@@ -648,7 +649,8 @@ class OverlayController(
      *  stretch the button and shift the rows above it on every toggle. */
     private fun captionIcon(on: Boolean): Drawable? {
         val glyph = tintedIcon(
-            R.drawable.ic_captions, if (on) contrastOn(style.accentColor) else style.iconTint,
+            if (!on && isAndroid17()) R.drawable.ic_captions_off else R.drawable.ic_captions,
+            if (on) contrastOn(style.accentColor) else if (isAndroid17()) style.textColor else style.iconTint,
         ) ?: return null
         return LayerDrawable(
             arrayOf(ovalBg(if (on) style.accentColor else Color.TRANSPARENT), glyph),
@@ -672,6 +674,7 @@ class OverlayController(
 
     fun show() {
         if (!isEditor()) MediaBooster.addStateListener(boostStateListener)
+        watchOutput()
         // In live-edit the component being edited decides whether the expanded sheet is drawn (the
         // output picker also draws the sheet, then layers its modal on top). A version with no separate
         // expanded panel (Android 7–8) instead shows its single panel fully expanded, so every row is
@@ -812,6 +815,7 @@ class OverlayController(
         callColumnSlider = null
         mediaColumnSlider = null
         legacyIconRefresh = null
+        unwatchOutput()
         boostBar = null
         ringerIcon = null
         ringerButtons = null
@@ -844,6 +848,18 @@ class OverlayController(
         dismissing = false
     }
 
+    /**
+     * The screen turned, or otherwise changed size, while a panel was up. Its window is as big as the
+     * display it opened on and the Android 17 panel is fitted to that display's height, so the panel
+     * is rebuilt for the new one, keeping whatever it was showing (expanded or not, folded or not).
+     * Editors have their own window and size themselves.
+     */
+    fun onConfigurationChanged() {
+        if (root == null || dismissing || isEditor()) return
+        render()
+        armAutoHide()
+    }
+
     fun destroy() {
         MediaBooster.removeStateListener(boostStateListener)
         hide()
@@ -859,7 +875,10 @@ class OverlayController(
         // own colour overrides, so rebuild the style every pass.
         style = buildStyle()
         if (preview != null) { renderPreview(); return }
-        val sig = "${curSkin()}|${isDark()}|$expanded|${AppSettings.language.value.code}"
+        // The screen's orientation is part of it: the window and the panel are sized for the display they
+        // opened on, so turning the phone has to make new ones.
+        val sig = "${curSkin()}|${isDark()}|$expanded|${AppSettings.language.value.code}" +
+            "|${context.resources.configuration.orientation}"
         // A fresh appearance (nothing on screen yet), or an explicit expand into the "Sound" sheet,
         // earns the slide-in entrance; a plain re-show from a repeated key press keeps the panel put.
         val entering = root == null || forceEntrance
@@ -1269,6 +1288,14 @@ class OverlayController(
         curSkin() == OverlaySkin.ANDROID_13_14 && curIconSet() == IconSet.ANDROID_16
 
     /**
+     * The Android 17 style: the same output card and picker as 15 and 16, but a sheet of its own —
+     * labelled handle-bar sliders folded behind the primary row, a header that names what is playing,
+     * and the Device Settings and Live Caption buttons. See [populateAndroid17Sheet].
+     */
+    private fun isAndroid17() =
+        curSkin() == OverlaySkin.ANDROID_13_14 && curIconSet() == IconSet.ANDROID_17
+
+    /**
      * A call is in progress — see [inCall] for what counts as one.
      *
      * Editors always report false: a preview that reshaped itself because a call came in mid-edit
@@ -1537,7 +1564,7 @@ class OverlayController(
                     // Right-edge collapsed control, vertically centred.
                     gravity = Gravity.END or Gravity.CENTER_VERTICAL
                     x = edge - dx
-                    y = dy
+                    y = dy + collapsedDrop()
                 }
                 style.placement == Placement.TOP -> {
                     // Android 7–8 sheet (stock: top).
@@ -1557,6 +1584,39 @@ class OverlayController(
             }
         }
     }
+
+    /** [v] dp in exact pixels, without the overlay's uniform shrink. The Android 17 panel is drawn to
+     *  the numbers in Android's own volume dialog, which a shrunk copy would no longer match. */
+    private fun dpe(v: Int): Int = (v * density).roundToInt()
+
+    /** How the Android 17 collapsed panel is fitted to the screen: its slider's height and how far
+     *  below centre the whole panel sits, both in exact dp. */
+    private class Collapsed17(val sliderDp: Int, val dropDp: Int)
+
+    /**
+     * The source's slider is a fixed 254dp, which is right in portrait and puts the panel off the
+     * screen in landscape, where a phone is barely 400dp tall. Stock's own panel never takes more than
+     * about three quarters of the screen's height, so the slider gives up whatever that takes, and the
+     * panel sits a fixed share of the screen below centre (6%, which is the 55dp it has in portrait),
+     * less if that would leave it touching the bottom edge.
+     */
+    private fun collapsed17(): Collapsed17 {
+        val screenDp = realScreenHeight() / density
+        // The card's 10dp above and below, the 40dp ringer and bars buttons with the 8dp between each
+        // part of the column, and the Live Caption square and its gap where that is switched on.
+        val fixed = 10 + 40 + 8 + 8 + 40 + 10 + (if (captionsSupported()) 40 + 8 else 0)
+        val slider = (A17_PANEL_MAX_FRACTION * screenDp - fixed)
+            .coerceIn(A17_SLIDER_MIN_DP.toFloat(), A17_SLIDER_DP.toFloat())
+        // Stock sits a fixed share of the screen below centre, but never so low that the panel meets the
+        // bottom edge.
+        val clearance = (screenDp - fixed - slider) / 2f - A17_PANEL_MARGIN_DP
+        val drop = (A17_PANEL_DROP_FRACTION * screenDp).coerceAtMost(clearance).coerceAtLeast(0f)
+        return Collapsed17(slider.toInt(), drop.toInt())
+    }
+
+    /** The collapsed Android 17 panel does not sit on the screen's centre line, as every other
+     *  right-edge panel does; stock puts it lower. The user's own offset still adds to this. */
+    private fun collapsedDrop(): Int = if (isAndroid17()) dpe(collapsed17().dropDp) else 0
 
     /**
      * Where the panel sits inside the full-screen scrim (or the editor's preview host): the docking
@@ -1590,7 +1650,7 @@ class OverlayController(
             isRichPanel() -> {
                 lp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
                 lp.rightMargin = edge - dx
-                lp.topMargin = dy
+                lp.topMargin = dy + collapsedDrop()
             }
 
             style.placement == Placement.TOP -> {
@@ -1620,6 +1680,7 @@ class OverlayController(
         callColumnSlider = null
         mediaColumnSlider = null
         legacyIconRefresh = null
+        outputIconRefresh = null
         ringerIcon = null
         ringerButtons = null
         genericRingSlider = null
@@ -1629,6 +1690,7 @@ class OverlayController(
         // and the collapsed panels (which show none) then correctly leave it stopped.
         stopAppSync()
         when {
+            isRichPanel() && expanded && isAndroid17() -> populateAndroid17Sheet(container as LinearLayout)
             isRichPanel() && expanded && isAndroid15Sheet() -> populateAndroid15Sheet(container as LinearLayout)
             isRichPanel() && expanded -> populate911Expanded(container as LinearLayout)
             isRichPanel() -> populate911Collapsed(container as LinearLayout)
@@ -2488,7 +2550,7 @@ class OverlayController(
         return row
     }
 
-    private fun makeFooter(): View {
+    private fun makeFooter(withCaption: Boolean = true): View {
         val footer = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -2496,7 +2558,7 @@ class OverlayController(
         }
         // Live Caption sits centred between the two buttons — a spacer either side puts it
         // mid-sheet rather than tucked into a corner.
-        val caption = makeCaptionButton()
+        val caption = if (withCaption) makeCaptionButton() else null
         if (isModernSheet()) {
             // Android 13–14: rounded (pill) buttons — SETTINGS outlined, DONE filled tonal.
             footer.addView(outlinedPillButton(strings.panelSettings) { openSoundSettings() })
@@ -2621,6 +2683,9 @@ class OverlayController(
                 legacy -> R.drawable.ic_stream_ring_outline
                 else -> R.drawable.ic_stream_ring
             }
+        }.let { res ->
+            // Android 17 draws vibrate as a phone with its own outline and two bars a side.
+            if (res == R.drawable.ic_ring_vibrate && isAndroid17()) R.drawable.ic_ring_vibrate_expressive else res
         }
     }
 
@@ -2721,6 +2786,374 @@ class OverlayController(
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
         )
         container.addView(makeFooter())
+    }
+
+    // ── Android 17: the expressive sheet ────────────────────────────────────────────────────────────
+
+    /** The Android 17 header's caption line, kept so it can name the app that starts playing. */
+    private var sheetCaption: TextView? = null
+
+    /** Repaints whatever on the Android 17 panel depends on where media is going (the note's Bluetooth
+     *  badge, the header's output name and icon). Null on every other panel and while none is open. */
+    private var outputIconRefresh: (() -> Unit)? = null
+
+    /**
+     * A headset connecting or leaving while the panel is open changes where media goes, and stock
+     * changes the icons to match on the spot. Registered while a panel is on screen, and only then.
+     * (The platform reports the current devices as soon as a callback is registered, which is
+     * harmless: it repaints what is already right.)
+     */
+    private val outputCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) { outputIconRefresh?.invoke() }
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) { outputIconRefresh?.invoke() }
+    }
+    private var outputWatched = false
+
+    private fun watchOutput() {
+        if (isEditor() || outputWatched) return
+        runCatching { audioManager.registerAudioDeviceCallback(outputCallback, handler) }
+            .onSuccess { outputWatched = true }
+    }
+
+    private fun unwatchOutput() {
+        outputIconRefresh = null
+        if (!outputWatched) return
+        runCatching { audioManager.unregisterAudioDeviceCallback(outputCallback) }
+        outputWatched = false
+    }
+
+    /**
+     * The Android 17 sheet. It opens on one row — Media, or Call during a call — with a chevron that
+     * unfolds the other streams, under a header that says what is playing and where, and above two
+     * buttons (Device Settings, Live Caption) and the usual SETTINGS/DONE footer. Every stream is a
+     * label over a [SliderRender.HANDLE] slider.
+     *
+     * The per-app sliders stay outside the fold: they are the point of this app, and hiding them
+     * behind a chevron on the one sheet that folds would make them harder to reach than on any other.
+     * "App sliders first" puts them above the folded streams, otherwise below.
+     */
+    private fun populateAndroid17Sheet(container: LinearLayout) {
+        loadJob?.cancel()
+        container.removeAllViews()
+        notifSlider = null
+        notifSliderRow = null
+        notifDisabledRow = null
+
+        val inCall = callPanel()
+        val rows = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(20), dp(24), 0)
+        }
+        rows.addView(headerRow17(inCall), rowParams17(bottom = 20))
+
+        val body = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (sheetCallOpen) View.VISIBLE else View.GONE
+        }
+        val media = {
+            handleRow(
+                strings.streamMedia, R.drawable.ic_stream_media, AudioManager.STREAM_MUSIC,
+                mutedIconRes = R.drawable.ic_ring_megaphone_off,
+            )
+        }
+        val call = { handleRow(strings.streamCall, R.drawable.ic_stream_call, AudioManager.STREAM_VOICE_CALL) }
+
+        // The row the sheet opens on, and the chevron that folds the rest in and out.
+        rows.addView(foldRow17(if (inCall) call() else media(), body), rowParams17(bottom = 14))
+        // Under Media, which the volume keys still drive while this sheet is open.
+        if (!inCall) addBoostBar(rows, index = rows.childCount, vertical = false, showLabel = true)
+
+        val appsBox = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        if (prefs.isAppsFirstEnabled()) rows.addView(appsBox, rowParams17())
+        rows.addView(body, rowParams17())
+        if (!prefs.isAppsFirstEnabled()) rows.addView(appsBox, rowParams17())
+
+        if (inCall) {
+            body.addView(media().row, rowParams17(bottom = 14))
+            addBoostBar(body, index = body.childCount, vertical = false, showLabel = true)
+        } else {
+            body.addView(call().row, rowParams17(bottom = 14))
+        }
+        body.addView(
+            handleRow(
+                strings.streamRing, R.drawable.ic_stream_ring_phone, AudioManager.STREAM_RING,
+                mutedIconRes = R.drawable.ic_ring_vibrate_expressive,
+                afterChange = { refreshExpandedNotificationAvailability() },
+            ).row,
+            rowParams17(bottom = 14),
+        )
+        // Both the live Notification row and its muted stand-in are laid out; the Ring row swaps them.
+        val notif = handleRow(strings.streamNotification, R.drawable.ic_stream_notification, AudioManager.STREAM_NOTIFICATION)
+        notifSlider = notif.slider
+        notifSliderRow = notif.row
+        notifDisabledRow = disabledNotificationRow17()
+        body.addView(notif.row, rowParams17(bottom = 14))
+        body.addView(notifDisabledRow, rowParams17(bottom = 14))
+        refreshExpandedNotificationAvailability()
+        body.addView(
+            handleRow(strings.streamAlarm, R.drawable.ic_stream_alarm, AudioManager.STREAM_ALARM).row,
+            rowParams17(bottom = 14),
+        )
+
+        loadHandleRowApps(appsBox)
+        rows.addView(actionButtons17(), rowParams17(top = 6, bottom = 4))
+
+        container.addView(
+            cappedScroll(rows),
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+        )
+        container.addView(makeFooter(withCaption = false))
+    }
+
+    private fun rowParams17(top: Int = 0, bottom: Int = 0) =
+        LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = dp(top); bottomMargin = dp(bottom) }
+
+    /** A stream's row — its label over the slider — and the slider itself, which callers still need. */
+    private class HandleRow(val row: LinearLayout, val slider: VolumeSlider)
+
+    /** The Android 17 row: [label] over a handle slider carrying [iconRes] in its far end. */
+    private fun handleRow(
+        label: String,
+        iconRes: Int,
+        streamType: Int,
+        mutedIconRes: Int? = null,
+        afterChange: (() -> Unit)? = null,
+    ): HandleRow {
+        val slider = makeSlider(
+            icon = tintedIcon(iconRes), glyph = null, label = null, chevron = ChevronDir.NONE, onChevron = {},
+            orientation = SliderOrientation.HORIZONTAL, fill = true, reserveTrailing = false,
+            render = SliderRender.HANDLE, mutedIcon = mutedIconRes?.let { tintedIcon(it) },
+        ) { level ->
+            setStream(streamType, level)
+            afterChange?.invoke()
+        }.apply {
+            onDragStateChange = { dragging -> if (!dragging) level = streamLevel(streamType) }
+            level = streamLevel(streamType)
+        }
+        // The keys drive the call row while a call is up and the media row otherwise; whichever it is
+        // becomes the slider a key press updates in place, and media parks in [secondarySlider].
+        if (streamType == keyStream()) mediaSlider = slider
+        else if (streamType == AudioManager.STREAM_MUSIC) secondarySlider = slider
+        return HandleRow(labelledRow17(label, slider), slider)
+    }
+
+    /** [slider] under a row [label] in the sheet's text colour. */
+    private fun labelledRow17(label: CharSequence, slider: View, labelOut: ((TextView) -> Unit)? = null): LinearLayout =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            val text = TextView(context).apply {
+                this.text = label
+                setTextColor(style.textColor)
+                textSize = 17f
+                setPadding(0, 0, 0, dp(6))
+            }
+            labelOut?.invoke(text)
+            addView(text, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(slider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpe(52)))
+        }
+
+    /**
+     * The sheet's first row with the round chevron beside it that folds [body] — every other stream —
+     * in and out. Toggled in place rather than by rebuilding the sheet, which would cancel the app
+     * sync, drop the scroll position and re-query the app list, all to hide four rows.
+     */
+    private fun foldRow17(primary: HandleRow, body: View): View {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+        }
+        row.addView(primary.row, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val chevron = ImageView(context).apply {
+            background = roundedBg(style.trackColor, dp(14).toFloat())
+            val p = dp(8); setPadding(p, p, p, p)
+            fun paint() = setImageDrawable(
+                tintedIcon(if (sheetCallOpen) R.drawable.ic_expand_down else R.drawable.ic_expand_up, style.textColor),
+            )
+            paint()
+            setOnClickListener {
+                if (isEditor()) return@setOnClickListener // visual-only preview
+                armAutoHide() // interacting keeps the panel alive
+                sheetCallOpen = !sheetCallOpen
+                body.visibility = if (sheetCallOpen) View.VISIBLE else View.GONE
+                paint()
+            }
+        }
+        // Centred on the slider's track, which sits in the lower part of the labelled row.
+        row.addView(
+            chevron,
+            LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(12); bottomMargin = dp(6) },
+        )
+        return row
+    }
+
+    /** Whether media is going to something other than the phone — a headset, wired or Bluetooth. */
+    private fun outputIsExternal(): Boolean {
+        if (isEditor()) return false
+        return runCatching {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in EXTERNAL_OUTPUT_TYPES }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * What the header's caption says: where a call is, what is playing (once the app sync has found
+     * out which app), or where media is going to go.
+     */
+    private fun captionText17(playing: String?, inCall: Boolean): String = when {
+        inCall -> strings.panelCallingOn
+        playing != null && audioManager.isMusicActive -> strings.panelPlayingOn(playing)
+        else -> strings.panelMediaWillPlayOn
+    }
+
+    /** The header: the caption and the output's name, and the button that opens the output picker. */
+    private fun headerRow17(inCall: Boolean): View {
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            setOnClickListener {
+                // A call's output is not the media picker's to change, as on the 15 and 16 card.
+                if (inCall) return@setOnClickListener
+                if (liveEdit == null && preview == null) { armAutoHide(); openOutputPicker() }
+            }
+        }
+        val col = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        val caption = TextView(context).apply {
+            text = captionText17(null, inCall)
+            setTextColor(style.iconTint)
+            textSize = 15f
+        }
+        sheetCaption = caption
+        col.addView(caption)
+        val outputName = TextView(context).apply {
+            text = currentOutputLabel()
+            setTextColor(style.textColor)
+            textSize = 21f
+            setPadding(0, dp(2), 0, 0)
+        }
+        col.addView(outputName)
+        header.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val chip = style.fillColor
+        val outputIcon = ImageView(context).apply {
+            background = roundedBg(chip, dp(18).toFloat())
+            val p = dp(16); setPadding(p, p, p, p)
+        }
+        // The name and the glyph follow the headset, on the spot, when one connects or leaves.
+        val refreshOutput = {
+            outputName.text = currentOutputLabel()
+            val icon = if (outputIsExternal()) R.drawable.ic_headset else R.drawable.ic_phone_device
+            outputIcon.setImageDrawable(tintedIcon(icon, contrastOn(chip)))
+        }
+        refreshOutput()
+        if (!inCall) outputIconRefresh = refreshOutput
+        header.addView(outputIcon, LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginStart = dp(12) })
+        return header
+    }
+
+    /** The muted Notification row's stand-in: its label, a greyed track, and why it can't be moved. */
+    private fun disabledNotificationRow17(): View {
+        val slider = makeSlider(
+            icon = tintedIcon(R.drawable.ic_ring_vibrate_expressive), glyph = null, label = null, chevron = ChevronDir.NONE,
+            onChevron = {}, orientation = SliderOrientation.HORIZONTAL, fill = true, reserveTrailing = false,
+            render = SliderRender.HANDLE, interactive = false,
+        ) { }.apply {
+            level = 0f
+            sliderEnabled = false
+        }
+        val row = labelledRow17(strings.streamNotification, slider)
+        val note = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        note.addView(
+            ImageView(context).apply { setImageDrawable(tintedIcon(R.drawable.ic_info, style.textColor)) },
+            LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(10) },
+        )
+        note.addView(TextView(context).apply {
+            text = strings.panelNotificationUnavailable
+            setTextColor(style.textColor)
+            textSize = 14f
+        })
+        row.addView(note, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = dp(6) })
+        return row
+    }
+
+    /**
+     * Device Settings and Live Caption: two wide pills, each with its label underneath. Live Caption is
+     * only there where the Overlay tab has switched its button on, as in every other style; without it
+     * Device Settings takes the whole width.
+     */
+    private fun actionButtons17(): View {
+        val bar = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        fun button(icon: View, label: String, onClick: () -> Unit) = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            val pill = FrameLayout(context).apply {
+                background = roundedBg(style.trackColor, dp(28).toFloat())
+                isClickable = true
+                setOnClickListener { armAutoHide(); onClick() }
+                addView(icon, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+            }
+            addView(pill, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)))
+            addView(TextView(context).apply {
+                text = label
+                setTextColor(style.textColor)
+                textSize = 15f
+                gravity = Gravity.CENTER
+                setPadding(0, dp(10), 0, 0)
+            })
+        }
+        val device = button(
+            ImageView(context).apply { setImageDrawable(tintedIcon(R.drawable.ic_devices, style.iconTint)) },
+            strings.panelDeviceSettings,
+        ) { openDeviceSettings() }
+        bar.addView(device, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        makeCaptionButton()?.let { caption ->
+            bar.addView(
+                button(caption, strings.panelLiveCaption) { caption.performClick() },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) },
+            )
+        }
+        return bar
+    }
+
+    /** Device Settings: the system's Bluetooth page, where a headset's own options live. */
+    private fun openDeviceSettings() {
+        if (isEditor()) return
+        runCatching {
+            context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        hide()
+    }
+
+    /**
+     * The per-app rows of the Android 17 sheet: the app's name over a handle slider carrying its own
+     * icon, with the same boost room and name-with-percentage as every other app row.
+     */
+    private fun loadHandleRowApps(container: LinearLayout) {
+        startAppSync(container) { app ->
+            val boost = AppBoostUi(app)
+            val slider = makeSlider(
+                icon = app.icon, glyph = null, label = null, chevron = ChevronDir.NONE, onChevron = {},
+                orientation = SliderOrientation.HORIZONTAL, fill = true, reserveTrailing = false,
+                render = SliderRender.HANDLE, recolorIcon = false, // keep full-colour app icons
+            ) { level ->
+                appDragHaptic(app.pkg, level)
+                appVolume.setVolume(app.pkg, level, app.piids)
+                boost.refresh()
+            }.apply { level = appVolume.volumeFor(app.pkg) }
+            lateinit var name: TextView
+            val row = labelledRow17(app.label, slider) { name = it }
+            boost.bind(slider) { name.text = it }
+            row.layoutParams = rowParams17(bottom = 14)
+            row
+        }
+    }
+
+    /** Called when the app sync learns which apps are playing, so the header can name the first one. */
+    private fun refreshSheetCaption(playing: String?) {
+        sheetCaption?.text = captionText17(playing, callPanel())
     }
 
     /**
@@ -3395,13 +3828,18 @@ class OverlayController(
         loadJob?.cancel()
         container.removeAllViews()
         val corner = dp(style.containerCornerDp).toFloat()
-        val cardW = dp(style.pillThicknessDp) + dp(14)
+        val handle17 = isAndroid17()
+        // Android 17 draws a wider card: its handle bar stands proud of the track on both sides.
+        val cardW = if (handle17) dpe(60) else dp(style.pillThicknessDp) + dp(14)
+        val panel17 = if (handle17) collapsed17() else null
 
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            background = roundedBg(style.containerColor, corner)
-            setPadding(0, dp(8), 0, 0)
+            // Android 17's card is a full pill: its ends are semicircles, not rounded corners.
+            background = roundedBg(style.containerColor, if (handle17) cardW / 2f else corner)
+            // 10dp of card above the ringer button, as in the Android 17 source.
+            setPadding(0, if (handle17) dpe(10) else dp(8), 0, 0)
             // Animate the ringer modes appearing/disappearing (and the card/window resizing to fit).
             layoutTransition = LayoutTransition().apply {
                 enableTransitionType(LayoutTransition.CHANGING)
@@ -3412,7 +3850,7 @@ class OverlayController(
         // Ringer buttons in fixed order (top→bottom: vibrate, silent, notification/normal); only the
         // active one is visible until the control is opened. Square so the selected-mode oval
         // background renders as a perfect circle.
-        val ringSize = dp(style.pillThicknessDp) + dp(4)
+        val ringSize = if (handle17) dpe(40) else dp(style.pillThicknessDp) + dp(4)
         val modeButtons = LinkedHashMap<Int, ImageView>()
         intArrayOf(
             AudioManager.RINGER_MODE_VIBRATE,
@@ -3420,7 +3858,8 @@ class OverlayController(
             AudioManager.RINGER_MODE_NORMAL,
         ).forEach { mode ->
             val btn = ImageView(context).apply {
-                val p = dp(10); setPadding(p, p, p, p)
+                val p = if (handle17) dpe(7) else dp(10)
+                setPadding(p, p, p, p)
                 setOnClickListener {
                     if (isEditor()) return@setOnClickListener // visual-only preview
                     armAutoHide() // interacting keeps the panel alive
@@ -3436,7 +3875,10 @@ class OverlayController(
             modeButtons[mode] = btn
             card.addView(
                 btn,
-                LinearLayout.LayoutParams(ringSize, ringSize).apply { topMargin = dp(2); bottomMargin = dp(2) },
+                LinearLayout.LayoutParams(ringSize, ringSize).apply {
+                    topMargin = if (handle17) 0 else dp(2)
+                    bottomMargin = if (handle17) 0 else dp(2)
+                },
             )
         }
         ringerButtons = modeButtons
@@ -3454,16 +3896,26 @@ class OverlayController(
         val onFill = style.mediaIconColor ?: contrastOn(style.fillColor)
         slider = makeSlider(
             icon = tintedIcon(
-                if (mainStream == AudioManager.STREAM_VOICE_CALL) R.drawable.ic_stream_call
-                else R.drawable.ic_stream_media,
+                when {
+                    mainStream == AudioManager.STREAM_VOICE_CALL -> R.drawable.ic_stream_call
+                    // A note with a Bluetooth badge when the media is going to a headset, as stock draws it.
+                    handle17 && outputIsExternal() -> R.drawable.ic_stream_media_bt
+                    else -> R.drawable.ic_stream_media
+                },
                 onFill,
             ),
             glyph = null, label = null, chevron = ChevronDir.NONE, onChevron = {},
             orientation = SliderOrientation.VERTICAL, fill = true, reserveTrailing = false,
+            // Android 17 parts the fill from the track with a free-standing handle bar.
+            render = if (handle17) SliderRender.HANDLE else style.render,
             // No muted icon for the call stream: its floor is 1 on nearly every device, so it never
             // reaches the muted state the crossed-out glyph exists to show.
             mutedIcon = if (mainStream == AudioManager.STREAM_VOICE_CALL) null
-            else tintedIcon(R.drawable.ic_stream_media_off, onFill),
+            else tintedIcon(
+                // Muted on a headset the note keeps its Bluetooth badge, struck through, as stock draws it.
+                if (handle17 && outputIsExternal()) R.drawable.ic_stream_media_bt_off else R.drawable.ic_stream_media_off,
+                onFill,
+            ),
             // Android 15 gives the media slider a full-width shaped pill background (the track color)
             // rather than the thin centre stick Android 12–14 keep.
             capsuleFullTrack = isAndroid15Sheet(),
@@ -3478,25 +3930,76 @@ class OverlayController(
                 level = streamLevel(mainStream)
             }
         mediaSlider = slider
+        if (handle17 && mainStream != AudioManager.STREAM_VOICE_CALL) {
+            // A headset connecting or leaving while the panel is open swaps the note, as it does on stock.
+            outputIconRefresh = {
+                val headset = outputIsExternal()
+                slider.icon = tintedIcon(
+                    if (headset) R.drawable.ic_stream_media_bt else R.drawable.ic_stream_media, onFill,
+                )
+                slider.mutedIcon = tintedIcon(
+                    if (headset) R.drawable.ic_stream_media_bt_off else R.drawable.ic_stream_media_off, onFill,
+                )
+            }
+        }
         if (callMode) callColumnSlider = slider
         card.addView(
             slider,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(188)).apply { topMargin = dp(30) },
+            // Android 17's slider is taller and sits closer to the ringer: it has no capsule crown to
+            // clear the track by.
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                if (panel17 != null) dpe(panel17.sliderDp) else dp(188),
+            )
+                .apply { topMargin = if (handle17) dpe(8) else dp(30) },
         )
 
-        // Android 12–15's overflow: a three-dot button on the card's own background. Its own editable
-        // colour (overflowColor) when the user pins one, else the theme accent as before.
-        val more = ImageView(context).apply {
-            setImageDrawable(tintedIcon(R.drawable.ic_more_horiz, style.overflowColor ?: style.accentColor))
-            setPadding(dp(9), dp(10), dp(9), dp(12))
-            setOnClickListener { expand() }
-        }.tagColor(EditableColor.OVERFLOW)
-        card.addView(more, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        // Live Caption's toggle shares the card's column under the overflow — the card is only as
-        // wide as the pill, so a side-by-side row would squeeze both icons.
-        makeCaptionButton()?.let {
-            it.setPadding(dp(9), dp(4), dp(9), dp(12))
-            card.addView(it, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        if (handle17) {
+            // Android 17 stacks Live Caption in a rounded square (where the user has switched it on) over
+            // the sound bars, which open the sheet in place of the older panels' three dots and dance
+            // while anything is playing.
+            makeCaptionButton()?.let {
+                it.setPadding(dpe(3), dpe(3), dpe(3), dpe(3))
+                it.background = roundedBg(style.trackColor, dpe(12).toFloat())
+                card.addView(
+                    it,
+                    LinearLayout.LayoutParams(dpe(40), dpe(40)).apply { topMargin = dpe(8) },
+                )
+            }
+            // Stock shows the sound bars only while something is playing, and the tune glyph the rest of
+            // the time. An editor has nothing playing, but shows the bars so their colour can be picked.
+            val playing = !isEditor() && audioManager.isMusicActive
+            val sheetButton: View = if (playing || isEditor()) {
+                SoundBarsView(
+                    context, style.overflowColor ?: style.accentColor,
+                    isPlaying = { playing && audioManager.isMusicActive },
+                )
+            } else {
+                ImageView(context).apply {
+                    setImageDrawable(tintedIcon(R.drawable.ic_tune, style.overflowColor ?: style.accentColor))
+                    setPadding(dpe(8), dpe(8), dpe(8), dpe(8))
+                }
+            }
+            sheetButton.setOnClickListener { expand() }
+            card.addView(
+                sheetButton.tagColor(EditableColor.OVERFLOW),
+                LinearLayout.LayoutParams(dpe(40), dpe(40)).apply { topMargin = dpe(8); bottomMargin = dpe(10) },
+            )
+        } else {
+            // Android 12–15's overflow: a three-dot button on the card's own background. Its own editable
+            // colour (overflowColor) when the user pins one, else the theme accent as before.
+            val more = ImageView(context).apply {
+                setImageDrawable(tintedIcon(R.drawable.ic_more_horiz, style.overflowColor ?: style.accentColor))
+                setPadding(dp(9), dp(10), dp(9), dp(12))
+                setOnClickListener { expand() }
+            }.tagColor(EditableColor.OVERFLOW)
+            card.addView(more, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            // Live Caption's toggle shares the card's column under the overflow — the card is only as
+            // wide as the pill, so a side-by-side row would squeeze both icons.
+            makeCaptionButton()?.let {
+                it.setPadding(dp(9), dp(4), dp(9), dp(12))
+                card.addView(it, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            }
         }
 
         if (!callMode) {
@@ -3607,8 +4110,14 @@ class OverlayController(
             // The active mode's icon sits on the accent disc → contrast the accent automatically (or
             // the "Active mode icon" override, when set); the inactive icons use the editable icon tint.
             val activeTint = style.modeIconColor ?: contrastOn(style.accentColor)
-            btn.setImageDrawable(tintedIcon(ringerIconRes(mode), if (active) activeTint else style.iconTint))
-            btn.background = if (active) ovalBg(style.accentColor) else null
+            // Android 17 draws the modes it is not on as dark rounded squares with a bright glyph.
+            val idleTint = if (isAndroid17()) style.textColor else style.iconTint
+            btn.setImageDrawable(tintedIcon(ringerIconRes(mode), if (active) activeTint else idleTint))
+            btn.background = when {
+                active -> ovalBg(style.accentColor)
+                isAndroid17() -> roundedBg(style.trackColor, dpe(10).toFloat())
+                else -> null
+            }
             btn.visibility = if (ringerMenuOpen || active) View.VISIBLE else View.GONE
         }
     }
@@ -3956,6 +4465,7 @@ class OverlayController(
         applyGenericSelection()
         // A boost can end without a touch (the output changed), so redraw the rows that are left.
         appBoostUis.keys.retainAll(wanted)
+        refreshSheetCaption(apps.firstOrNull()?.label)
         appBoostUis.values.forEach { it.refresh(syncBar = true) }
     }
 

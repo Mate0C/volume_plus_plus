@@ -3,7 +3,7 @@ package com.volume_plus_plus.app.overlay
 import com.volume_plus_plus.app.data.OverlayPrefs
 
 /**
- * One directly-selectable Android version in the overlay style picker (Android 7–16). Each maps to
+ * One directly-selectable Android version in the overlay style picker (Android 7–17). Each maps to
  * the underlying [OverlaySkin] plus, where the skin covers several releases, the sub-version pref its
  * skin reads — so picking e.g. "Android 15" both selects the 13–15 skin and sets its icon set.
  *
@@ -18,6 +18,7 @@ enum class OverlayVersion(
     val legacyVersion: LegacyVersion? = null,
     val sevenEightVersion: SevenEightVersion? = null,
 ) {
+    ANDROID_17("Android 17", OverlaySkin.ANDROID_13_14, iconSet = IconSet.ANDROID_17),
     ANDROID_16("Android 16", OverlaySkin.ANDROID_13_14, iconSet = IconSet.ANDROID_16),
     ANDROID_15("Android 15", OverlaySkin.ANDROID_13_14, iconSet = IconSet.ANDROID_15),
     ANDROID_14("Android 14", OverlaySkin.ANDROID_13_14, iconSet = IconSet.ANDROID_14),
@@ -68,6 +69,7 @@ enum class OverlayVersion(
                 IconSet.ANDROID_14 -> ANDROID_14
                 IconSet.ANDROID_15 -> ANDROID_15
                 IconSet.ANDROID_16 -> ANDROID_16
+                IconSet.ANDROID_17 -> ANDROID_17
             }
             OverlaySkin.ANDROID_9_11 -> when (prefs.getLegacyVersion()) {
                 LegacyVersion.ANDROID_9 -> ANDROID_9

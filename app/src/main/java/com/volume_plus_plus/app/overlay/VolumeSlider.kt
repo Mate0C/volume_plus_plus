@@ -46,7 +46,7 @@ enum class ChevronDir { NONE, UP, DOWN }
 class VolumeSlider(
     context: Context,
     private val style: OverlayStyle,
-    private val icon: Drawable?,
+    icon: Drawable?,
     private val glyph: String?,
     label: String?,
     chevron: ChevronDir,
@@ -81,7 +81,7 @@ class VolumeSlider(
      */
     private val recolorIcon: Boolean = true,
     /** [PILL_LABEL] only: the icon painted once the level reaches zero (e.g. a crossed speaker). */
-    private val mutedIcon: Drawable? = null,
+    mutedIcon: Drawable? = null,
     /**
      * [PILL_LABEL] picker only: explicit colours that override the [style] palette so the output
      * picker can match its own spec — the track (background), the fill, and a single "content"
@@ -123,6 +123,7 @@ class VolumeSlider(
     private val lineThumb = render == SliderRender.LINE_THUMB
     private val capsule = render == SliderRender.CAPSULE
     private val pillLabel = render == SliderRender.PILL_LABEL
+    private val handle = render == SliderRender.HANDLE
 
     /** 0 = idle (fully rounded fill) … 1 = dragging (fill's leading edge squared off). Animated. */
     private var dragProgress = 0f
@@ -244,7 +245,7 @@ class VolumeSlider(
      */
     var boostMaxSteps: Int = 0
         set(value) {
-            val steps = if (!vertical && (lineThumb || pillLabel)) value.coerceAtLeast(0) else 0
+            val steps = if (!vertical && (lineThumb || pillLabel || handle)) value.coerceAtLeast(0) else 0
             if (field == steps) return
             // Keep the volume and the boost where they were across the rescale of the track.
             val volume = level
@@ -284,6 +285,19 @@ class VolumeSlider(
             invalidate()
         }
 
+    /** The stream's icon, and the one drawn instead once the level reaches zero. Swappable so a panel
+     *  can change them live, as when a headset connects while it is open. */
+    var icon: Drawable? = icon
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var mutedIcon: Drawable? = mutedIcon
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     /**
      * The trailing expand/collapse chevron's direction. Mutable so a panel can flip it (DOWN⇄UP)
      * in place when it expands/collapses instead of rebuilding the row — the width it reserves is
@@ -297,6 +311,10 @@ class VolumeSlider(
 
     private val density = context.resources.displayMetrics.density
     private fun dp(v: Float) = v * density * OVERLAY_SCALE
+
+    /** Exact dp, without the overlay's uniform shrink: the handle slider is drawn to the numbers in
+     *  Android's own volume dialog, which a shrunk copy would no longer match. */
+    private fun dpe(v: Float) = v * density
 
     // NOTE: use also{it...} not apply{} — inside apply the receiver's own `style` member (Paint.style)
     // would shadow our `style` constructor param.
@@ -362,7 +380,7 @@ class VolumeSlider(
     // the volume when the user really means to scroll, we defer: on a scrollable row we don't grab
     // the gesture or move the level until we know the drag is horizontal. A vertical drag is left for
     // the scroller to consume.
-    private val scrollableRow = !vertical && (lineThumb || pillLabel)
+    private val scrollableRow = !vertical && (lineThumb || pillLabel || handle)
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private var downX = 0f
     private var downY = 0f
@@ -372,7 +390,8 @@ class VolumeSlider(
     private var horizontalClaim = false
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val thickness = dp(style.pillThicknessDp.toFloat()).toInt()
+        // A handle slider is wider than its track: the bar stands proud of it on both sides.
+        val thickness = maxOf(dp(style.pillThicknessDp.toFloat()), if (handle) dpe(HANDLE_HEIGHT_DP) else 0f).toInt()
         val length = dp(style.pillLengthDp.toFloat()).toInt()
         when {
             vertical && fill -> setMeasuredDimension(thickness, MeasureSpec.getSize(heightMeasureSpec))
@@ -392,6 +411,8 @@ class VolumeSlider(
     override fun onDraw(canvas: Canvas) {
         when {
             capsule -> drawCapsule(canvas)
+            handle && !vertical -> drawHandleHorizontal(canvas)
+            handle -> drawHandleVertical(canvas)
             pillLabel -> drawPillLabel(canvas)
             lineThumb && vertical -> drawLineThumbVertical(canvas)
             lineThumb -> drawLineThumbHorizontal(canvas)
@@ -715,6 +736,128 @@ class VolumeSlider(
         canvas.drawCircle(cx, thumbY, dp(7f), thumbPaint)
     }
 
+    // ── HANDLE (Android 17): a pill track and fill parted by a free-standing handle bar ────────────
+
+    /**
+     * A horizontal Android 17 row. The fill and the track are two pills with a gap either side of a
+     * vertical handle bar, which is the thing that moves: at 0% it sits against the left edge with
+     * the whole track after it, at 100% against the right with the whole fill before it. The facing
+     * ends of fill and track are squared off to a small radius so each reads as the cut end of one
+     * long pill; the outer ends stay fully round. The icon rides in the track's right cap, over the
+     * fill once the fill reaches it.
+     */
+    private fun drawHandleHorizontal(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val cy = h / 2f
+        val trackH = dpe(HANDLE_TRACK_DP)
+        val barW = dpe(HANDLE_WIDTH_DP)
+        val barH = minOf(dpe(HANDLE_HEIGHT_DP), h)
+        val gap = dpe(HANDLE_GAP_DP)
+        val big = trackH / 2f
+        val small = dpe(HANDLE_VERTICAL_FACING_DP)
+
+        val inactive = !sliderEnabled || dimmed
+        val fillColor = if (inactive) style.inactiveColor else (fillOverride ?: style.fillColor)
+        fillPaint.color = fillColor
+        thumbPaint.color = if (inactive) style.inactiveColor else style.thumbColor
+
+        val x = barW / 2f + (w - barW) * drawnLevel
+        val fillRight = x - barW / 2f - gap
+        val trackLeft = x + barW / 2f + gap
+
+        val top = cy - trackH / 2f
+        val bottom = cy + trackH / 2f
+        // Outer ends round, facing ends squared off: [tl, tr, br, bl] as x/y radius pairs.
+        if (trackLeft < w) {
+            bounds.set(trackLeft, top, w, bottom)
+            clipPath.reset()
+            clipPath.addRoundRect(bounds, floatArrayOf(small, small, big, big, big, big, small, small), Path.Direction.CW)
+            canvas.drawPath(clipPath, trackPaint)
+        }
+        if (fillRight > 0f) {
+            bounds.set(0f, top, fillRight, bottom)
+            clipPath.reset()
+            clipPath.addRoundRect(bounds, floatArrayOf(big, big, small, small, small, small, big, big), Path.Direction.CW)
+            canvas.drawPath(clipPath, fillPaint)
+            if (track.maxSteps > 0) {
+                // Past the 100% mark the fill carries on in the boost colour, cut at the mark.
+                val markX = barW / 2f + (w - barW) * track.fullAt
+                if (fillRight > markX) {
+                    canvas.save()
+                    canvas.clipRect(markX, 0f, w, h)
+                    canvas.drawPath(clipPath, boostPaint)
+                    canvas.restore()
+                }
+            }
+        }
+        if (track.maxSteps > 0) {
+            val markX = barW / 2f + (w - barW) * track.fullAt
+            drawMark(canvas, markX, top + dp(8f), bottom - dp(8f), if (fillRight >= markX) contrastOn(fillColor) else style.iconTint)
+        }
+
+        bounds.set(x - barW / 2f, cy - barH / 2f, x + barW / 2f, cy + barH / 2f)
+        canvas.drawRoundRect(bounds, barW / 2f, barW / 2f, thumbPaint)
+
+        val iconCx = w - big
+        val iconSize = dpe(ICON_DP)
+        val overFill = fillRight >= iconCx + iconSize / 2f
+        val onFill = style.pillContentOnFill ?: contrastOn(fillColor)
+        val onTrack = style.pillContentOnTrack ?: style.iconTint
+        drawIcon(canvas, iconCx, cy, iconSize, overFill, onFill, onTrack)
+    }
+
+    /**
+     * The vertical Android 17 slider of the collapsed panel: the same parts turned on end. The handle
+     * is a horizontal bar that rises with the level, with the track above it (the icon in its top cap)
+     * and the fill below it, so 100% is the bar against the top edge and 0% against the bottom.
+     */
+    private fun drawHandleVertical(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val cx = w / 2f
+        val trackW = dpe(HANDLE_TRACK_DP)
+        val barT = dpe(HANDLE_VERTICAL_BAR_DP)
+        val barW = minOf(dpe(HANDLE_HEIGHT_DP), w)
+        val gap = dpe(HANDLE_GAP_DP)
+        val big = dpe(HANDLE_VERTICAL_RADIUS_DP)
+        val small = dpe(HANDLE_VERTICAL_FACING_DP)
+
+        val inactive = !sliderEnabled || dimmed
+        val fillColor = if (inactive) style.inactiveColor else (fillOverride ?: style.fillColor)
+        fillPaint.color = fillColor
+        thumbPaint.color = if (inactive) style.inactiveColor else style.thumbColor
+
+        val y = barT / 2f + (h - barT) * (1f - drawnLevel)
+        val trackBottom = y - barT / 2f - gap
+        val fillTop = y + barT / 2f + gap
+        val left = cx - trackW / 2f
+        val right = cx + trackW / 2f
+
+        if (trackBottom > 0f) {
+            bounds.set(left, 0f, right, trackBottom)
+            clipPath.reset()
+            clipPath.addRoundRect(bounds, floatArrayOf(big, big, big, big, small, small, small, small), Path.Direction.CW)
+            canvas.drawPath(clipPath, trackPaint)
+        }
+        if (fillTop < h) {
+            bounds.set(left, fillTop, right, h)
+            clipPath.reset()
+            clipPath.addRoundRect(bounds, floatArrayOf(small, small, small, small, big, big, big, big), Path.Direction.CW)
+            canvas.drawPath(clipPath, fillPaint)
+        }
+        bounds.set(cx - barW / 2f, y - barT / 2f, cx + barW / 2f, y + barT / 2f)
+        canvas.drawRoundRect(bounds, barT / 2f, barT / 2f, thumbPaint)
+
+        val iconSize = dpe(ICON_DP)
+        val iconCy = dpe(HANDLE_VERTICAL_ICON_DP)
+        val overFill = fillTop <= iconCy - iconSize / 2f
+        drawIcon(
+            canvas, cx, iconCy, iconSize, overFill,
+            style.pillContentOnFill ?: contrastOn(fillColor), style.pillContentOnTrack ?: style.iconTint,
+        )
+    }
+
     /** The tick that marks 100% on a track with room for a boost: [x], from [top] to [bottom]. */
     private fun drawMark(canvas: Canvas, x: Float, top: Float, bottom: Float, color: Int) {
         markPaint.color = color
@@ -917,6 +1060,8 @@ class VolumeSlider(
     private fun updateFromTouch(event: MotionEvent) {
         if (!sliderEnabled) return
         val newLevel = when {
+            handle && !vertical -> (event.x - dpe(HANDLE_WIDTH_DP) / 2f) / (width - dpe(HANDLE_WIDTH_DP))
+            handle -> 1f - (event.y - dpe(HANDLE_VERTICAL_BAR_DP) / 2f) / (height - dpe(HANDLE_VERTICAL_BAR_DP))
             lineThumb && vertical -> (trackBottom() - event.y) / (trackBottom() - trackTop())
             lineThumb -> (event.x - trackLeft()) / (trackRight() - trackLeft())
             vertical -> 1f - event.y / height
@@ -972,6 +1117,20 @@ class VolumeSlider(
 
     private companion object {
         const val ICON_DP = 24f
+
+        /** The [HANDLE] row's parts, sampled off a stock Android 17 sheet: the track, the handle bar
+         *  that stands slightly proud of it, and the gap either side of that bar. */
+        const val HANDLE_TRACK_DP = 40f
+        const val HANDLE_HEIGHT_DP = 52f
+        const val HANDLE_WIDTH_DP = 4f
+        const val HANDLE_GAP_DP = 6f
+
+        /** The vertical row's outer corners are not fully round, as the horizontal ones are, and its icon
+         *  sits this far down from the top of the track. Measured off the stock collapsed panel. */
+        const val HANDLE_VERTICAL_RADIUS_DP = 12f
+        const val HANDLE_VERTICAL_FACING_DP = 2f
+        const val HANDLE_VERTICAL_BAR_DP = 4f
+        const val HANDLE_VERTICAL_ICON_DP = 22f
 
         /** How much of the remaining distance to the finger the bar covers each frame at a 100%
          *  follow speed. 200% doubles it to 1 — the bar sits exactly under the finger — and 50%

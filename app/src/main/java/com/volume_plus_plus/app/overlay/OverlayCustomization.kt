@@ -463,8 +463,20 @@ fun OverlayStyle.withPanelPalette(iconSet: IconSet?, dark: Boolean): OverlayStyl
 /** How close the Android 17 collapsed panel sits to the screen's edge. */
 const val A17_PANEL_EDGE_DP = 8
 
-/** How far below the screen's centre the Android 17 collapsed panel sits (stock's is not centred). */
-const val A17_PANEL_DROP_DP = 55f
+/**
+ * How the Android 17 collapsed panel is fitted to the screen, measured off the stock panel in both
+ * orientations: it is never more than this fraction of the screen tall, and its centre sits this
+ * fraction of the screen height below the screen's own. (6% is the 55dp below centre it has in
+ * portrait and the 25dp it has in landscape.)
+ */
+const val A17_PANEL_MAX_FRACTION = 0.76f
+const val A17_PANEL_DROP_FRACTION = 0.06f
+
+/** The slider's height in Android's volume dialog, the least it is allowed to shrink to when the screen
+ *  is short, and the gap kept between the panel and the top and bottom of the screen. */
+const val A17_SLIDER_DP = 254
+const val A17_SLIDER_MIN_DP = 96
+const val A17_PANEL_MARGIN_DP = 16
 
 /** The sheet palette for [iconSet]: Android 17's own, else the Android 15 one 15 and 16 share. */
 fun OverlayStyle.withSheetPalette(iconSet: IconSet?, dark: Boolean): OverlayStyle = when {

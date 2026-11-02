@@ -17,6 +17,7 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.app.NotificationManager
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
@@ -673,6 +674,7 @@ class OverlayController(
 
     fun show() {
         if (!isEditor()) MediaBooster.addStateListener(boostStateListener)
+        watchOutput()
         // In live-edit the component being edited decides whether the expanded sheet is drawn (the
         // output picker also draws the sheet, then layers its modal on top). A version with no separate
         // expanded panel (Android 7–8) instead shows its single panel fully expanded, so every row is
@@ -813,6 +815,7 @@ class OverlayController(
         callColumnSlider = null
         mediaColumnSlider = null
         legacyIconRefresh = null
+        unwatchOutput()
         boostBar = null
         ringerIcon = null
         ringerButtons = null
@@ -845,6 +848,18 @@ class OverlayController(
         dismissing = false
     }
 
+    /**
+     * The screen turned, or otherwise changed size, while a panel was up. Its window is as big as the
+     * display it opened on and the Android 17 panel is fitted to that display's height, so the panel
+     * is rebuilt for the new one, keeping whatever it was showing (expanded or not, folded or not).
+     * Editors have their own window and size themselves.
+     */
+    fun onConfigurationChanged() {
+        if (root == null || dismissing || isEditor()) return
+        render()
+        armAutoHide()
+    }
+
     fun destroy() {
         MediaBooster.removeStateListener(boostStateListener)
         hide()
@@ -860,7 +875,10 @@ class OverlayController(
         // own colour overrides, so rebuild the style every pass.
         style = buildStyle()
         if (preview != null) { renderPreview(); return }
-        val sig = "${curSkin()}|${isDark()}|$expanded|${AppSettings.language.value.code}"
+        // The screen's orientation is part of it: the window and the panel are sized for the display they
+        // opened on, so turning the phone has to make new ones.
+        val sig = "${curSkin()}|${isDark()}|$expanded|${AppSettings.language.value.code}" +
+            "|${context.resources.configuration.orientation}"
         // A fresh appearance (nothing on screen yet), or an explicit expand into the "Sound" sheet,
         // earns the slide-in entrance; a plain re-show from a repeated key press keeps the panel put.
         val entering = root == null || forceEntrance
@@ -1567,9 +1585,38 @@ class OverlayController(
         }
     }
 
+    /** [v] dp in exact pixels, without the overlay's uniform shrink. The Android 17 panel is drawn to
+     *  the numbers in Android's own volume dialog, which a shrunk copy would no longer match. */
+    private fun dpe(v: Int): Int = (v * density).roundToInt()
+
+    /** How the Android 17 collapsed panel is fitted to the screen: its slider's height and how far
+     *  below centre the whole panel sits, both in exact dp. */
+    private class Collapsed17(val sliderDp: Int, val dropDp: Int)
+
+    /**
+     * The source's slider is a fixed 254dp, which is right in portrait and puts the panel off the
+     * screen in landscape, where a phone is barely 400dp tall. Stock's own panel never takes more than
+     * about three quarters of the screen's height, so the slider gives up whatever that takes, and the
+     * panel sits a fixed share of the screen below centre (6%, which is the 55dp it has in portrait),
+     * less if that would leave it touching the bottom edge.
+     */
+    private fun collapsed17(): Collapsed17 {
+        val screenDp = realScreenHeight() / density
+        // The card's 10dp above and below, the 40dp ringer and bars buttons with the 8dp between each
+        // part of the column, and the Live Caption square and its gap where that is switched on.
+        val fixed = 10 + 40 + 8 + 8 + 40 + 10 + (if (captionsSupported()) 40 + 8 else 0)
+        val slider = (A17_PANEL_MAX_FRACTION * screenDp - fixed)
+            .coerceIn(A17_SLIDER_MIN_DP.toFloat(), A17_SLIDER_DP.toFloat())
+        // Stock sits a fixed share of the screen below centre, but never so low that the panel meets the
+        // bottom edge.
+        val clearance = (screenDp - fixed - slider) / 2f - A17_PANEL_MARGIN_DP
+        val drop = (A17_PANEL_DROP_FRACTION * screenDp).coerceAtMost(clearance).coerceAtLeast(0f)
+        return Collapsed17(slider.toInt(), drop.toInt())
+    }
+
     /** The collapsed Android 17 panel does not sit on the screen's centre line, as every other
      *  right-edge panel does; stock puts it lower. The user's own offset still adds to this. */
-    private fun collapsedDrop(): Int = if (isAndroid17()) dp(A17_PANEL_DROP_DP) else 0
+    private fun collapsedDrop(): Int = if (isAndroid17()) dpe(collapsed17().dropDp) else 0
 
     /**
      * Where the panel sits inside the full-screen scrim (or the editor's preview host): the docking
@@ -1633,6 +1680,7 @@ class OverlayController(
         callColumnSlider = null
         mediaColumnSlider = null
         legacyIconRefresh = null
+        outputIconRefresh = null
         ringerIcon = null
         ringerButtons = null
         genericRingSlider = null
@@ -2745,6 +2793,35 @@ class OverlayController(
     /** The Android 17 header's caption line, kept so it can name the app that starts playing. */
     private var sheetCaption: TextView? = null
 
+    /** Repaints whatever on the Android 17 panel depends on where media is going (the note's Bluetooth
+     *  badge, the header's output name and icon). Null on every other panel and while none is open. */
+    private var outputIconRefresh: (() -> Unit)? = null
+
+    /**
+     * A headset connecting or leaving while the panel is open changes where media goes, and stock
+     * changes the icons to match on the spot. Registered while a panel is on screen, and only then.
+     * (The platform reports the current devices as soon as a callback is registered, which is
+     * harmless: it repaints what is already right.)
+     */
+    private val outputCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) { outputIconRefresh?.invoke() }
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) { outputIconRefresh?.invoke() }
+    }
+    private var outputWatched = false
+
+    private fun watchOutput() {
+        if (isEditor() || outputWatched) return
+        runCatching { audioManager.registerAudioDeviceCallback(outputCallback, handler) }
+            .onSuccess { outputWatched = true }
+    }
+
+    private fun unwatchOutput() {
+        outputIconRefresh = null
+        if (!outputWatched) return
+        runCatching { audioManager.unregisterAudioDeviceCallback(outputCallback) }
+        outputWatched = false
+    }
+
     /**
      * The Android 17 sheet. It opens on one row — Media, or Call during a call — with a chevron that
      * unfolds the other streams, under a header that says what is playing and where, and above two
@@ -2873,7 +2950,7 @@ class OverlayController(
             }
             labelOut?.invoke(text)
             addView(text, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-            addView(slider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52)))
+            addView(slider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpe(52)))
         }
 
     /**
@@ -2948,23 +3025,28 @@ class OverlayController(
         }
         sheetCaption = caption
         col.addView(caption)
-        col.addView(TextView(context).apply {
+        val outputName = TextView(context).apply {
             text = currentOutputLabel()
             setTextColor(style.textColor)
             textSize = 21f
             setPadding(0, dp(2), 0, 0)
-        })
+        }
+        col.addView(outputName)
         header.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         val chip = style.fillColor
-        header.addView(
-            ImageView(context).apply {
-                val icon = if (outputIsExternal()) R.drawable.ic_headset else R.drawable.ic_phone_device
-                setImageDrawable(tintedIcon(icon, contrastOn(chip)))
-                background = roundedBg(chip, dp(18).toFloat())
-                val p = dp(16); setPadding(p, p, p, p)
-            },
-            LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginStart = dp(12) },
-        )
+        val outputIcon = ImageView(context).apply {
+            background = roundedBg(chip, dp(18).toFloat())
+            val p = dp(16); setPadding(p, p, p, p)
+        }
+        // The name and the glyph follow the headset, on the spot, when one connects or leaves.
+        val refreshOutput = {
+            outputName.text = currentOutputLabel()
+            val icon = if (outputIsExternal()) R.drawable.ic_headset else R.drawable.ic_phone_device
+            outputIcon.setImageDrawable(tintedIcon(icon, contrastOn(chip)))
+        }
+        refreshOutput()
+        if (!inCall) outputIconRefresh = refreshOutput
+        header.addView(outputIcon, LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginStart = dp(12) })
         return header
     }
 
@@ -3748,14 +3830,16 @@ class OverlayController(
         val corner = dp(style.containerCornerDp).toFloat()
         val handle17 = isAndroid17()
         // Android 17 draws a wider card: its handle bar stands proud of the track on both sides.
-        val cardW = dp(style.pillThicknessDp) + dp(if (handle17) 20 else 14)
+        val cardW = if (handle17) dpe(60) else dp(style.pillThicknessDp) + dp(14)
+        val panel17 = if (handle17) collapsed17() else null
 
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             // Android 17's card is a full pill: its ends are semicircles, not rounded corners.
             background = roundedBg(style.containerColor, if (handle17) cardW / 2f else corner)
-            setPadding(0, dp(if (handle17) 13 else 8), 0, 0)
+            // 10dp of card above the ringer button, as in the Android 17 source.
+            setPadding(0, if (handle17) dpe(10) else dp(8), 0, 0)
             // Animate the ringer modes appearing/disappearing (and the card/window resizing to fit).
             layoutTransition = LayoutTransition().apply {
                 enableTransitionType(LayoutTransition.CHANGING)
@@ -3766,7 +3850,7 @@ class OverlayController(
         // Ringer buttons in fixed order (top→bottom: vibrate, silent, notification/normal); only the
         // active one is visible until the control is opened. Square so the selected-mode oval
         // background renders as a perfect circle.
-        val ringSize = dp(style.pillThicknessDp) + dp(4)
+        val ringSize = if (handle17) dpe(40) else dp(style.pillThicknessDp) + dp(4)
         val modeButtons = LinkedHashMap<Int, ImageView>()
         intArrayOf(
             AudioManager.RINGER_MODE_VIBRATE,
@@ -3774,7 +3858,8 @@ class OverlayController(
             AudioManager.RINGER_MODE_NORMAL,
         ).forEach { mode ->
             val btn = ImageView(context).apply {
-                val p = dp(10); setPadding(p, p, p, p)
+                val p = if (handle17) dpe(7) else dp(10)
+                setPadding(p, p, p, p)
                 setOnClickListener {
                     if (isEditor()) return@setOnClickListener // visual-only preview
                     armAutoHide() // interacting keeps the panel alive
@@ -3790,7 +3875,10 @@ class OverlayController(
             modeButtons[mode] = btn
             card.addView(
                 btn,
-                LinearLayout.LayoutParams(ringSize, ringSize).apply { topMargin = dp(2); bottomMargin = dp(2) },
+                LinearLayout.LayoutParams(ringSize, ringSize).apply {
+                    topMargin = if (handle17) 0 else dp(2)
+                    bottomMargin = if (handle17) 0 else dp(2)
+                },
             )
         }
         ringerButtons = modeButtons
@@ -3823,7 +3911,11 @@ class OverlayController(
             // No muted icon for the call stream: its floor is 1 on nearly every device, so it never
             // reaches the muted state the crossed-out glyph exists to show.
             mutedIcon = if (mainStream == AudioManager.STREAM_VOICE_CALL) null
-            else tintedIcon(R.drawable.ic_stream_media_off, onFill),
+            else tintedIcon(
+                // Muted on a headset the note keeps its Bluetooth badge, struck through, as stock draws it.
+                if (handle17 && outputIsExternal()) R.drawable.ic_stream_media_bt_off else R.drawable.ic_stream_media_off,
+                onFill,
+            ),
             // Android 15 gives the media slider a full-width shaped pill background (the track color)
             // rather than the thin centre stick Android 12–14 keep.
             capsuleFullTrack = isAndroid15Sheet(),
@@ -3838,13 +3930,28 @@ class OverlayController(
                 level = streamLevel(mainStream)
             }
         mediaSlider = slider
+        if (handle17 && mainStream != AudioManager.STREAM_VOICE_CALL) {
+            // A headset connecting or leaving while the panel is open swaps the note, as it does on stock.
+            outputIconRefresh = {
+                val headset = outputIsExternal()
+                slider.icon = tintedIcon(
+                    if (headset) R.drawable.ic_stream_media_bt else R.drawable.ic_stream_media, onFill,
+                )
+                slider.mutedIcon = tintedIcon(
+                    if (headset) R.drawable.ic_stream_media_bt_off else R.drawable.ic_stream_media_off, onFill,
+                )
+            }
+        }
         if (callMode) callColumnSlider = slider
         card.addView(
             slider,
             // Android 17's slider is taller and sits closer to the ringer: it has no capsule crown to
             // clear the track by.
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(if (handle17) 268 else 188))
-                .apply { topMargin = dp(if (handle17) 10 else 30) },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                if (panel17 != null) dpe(panel17.sliderDp) else dp(188),
+            )
+                .apply { topMargin = if (handle17) dpe(8) else dp(30) },
         )
 
         if (handle17) {
@@ -3852,21 +3959,31 @@ class OverlayController(
             // the sound bars, which open the sheet in place of the older panels' three dots and dance
             // while anything is playing.
             makeCaptionButton()?.let {
-                it.setPadding(dp(3), dp(3), dp(3), dp(3))
-                it.background = roundedBg(style.trackColor, dp(17).toFloat())
+                it.setPadding(dpe(3), dpe(3), dpe(3), dpe(3))
+                it.background = roundedBg(style.trackColor, dpe(12).toFloat())
                 card.addView(
                     it,
-                    LinearLayout.LayoutParams(dp(40), dp(40)).apply { topMargin = dp(10) },
+                    LinearLayout.LayoutParams(dpe(40), dpe(40)).apply { topMargin = dpe(8) },
                 )
             }
-            val bars = SoundBarsView(
-                context, style.overflowColor ?: style.accentColor,
-                // An editor never plays anything, and holds the bars still so a swatch can be picked.
-                isPlaying = { !isEditor() && audioManager.isMusicActive },
-            ).apply { setOnClickListener { expand() } }.tagColor(EditableColor.OVERFLOW)
+            // Stock shows the sound bars only while something is playing, and the tune glyph the rest of
+            // the time. An editor has nothing playing, but shows the bars so their colour can be picked.
+            val playing = !isEditor() && audioManager.isMusicActive
+            val sheetButton: View = if (playing || isEditor()) {
+                SoundBarsView(
+                    context, style.overflowColor ?: style.accentColor,
+                    isPlaying = { playing && audioManager.isMusicActive },
+                )
+            } else {
+                ImageView(context).apply {
+                    setImageDrawable(tintedIcon(R.drawable.ic_tune, style.overflowColor ?: style.accentColor))
+                    setPadding(dpe(8), dpe(8), dpe(8), dpe(8))
+                }
+            }
+            sheetButton.setOnClickListener { expand() }
             card.addView(
-                bars,
-                LinearLayout.LayoutParams(dp(40), dp(40)).apply { topMargin = dp(8); bottomMargin = dp(18) },
+                sheetButton.tagColor(EditableColor.OVERFLOW),
+                LinearLayout.LayoutParams(dpe(40), dpe(40)).apply { topMargin = dpe(8); bottomMargin = dpe(10) },
             )
         } else {
             // Android 12–15's overflow: a three-dot button on the card's own background. Its own editable
@@ -3998,7 +4115,7 @@ class OverlayController(
             btn.setImageDrawable(tintedIcon(ringerIconRes(mode), if (active) activeTint else idleTint))
             btn.background = when {
                 active -> ovalBg(style.accentColor)
-                isAndroid17() -> roundedBg(style.trackColor, dp(17).toFloat())
+                isAndroid17() -> roundedBg(style.trackColor, dpe(10).toFloat())
                 else -> null
             }
             btn.visibility = if (ringerMenuOpen || active) View.VISIBLE else View.GONE

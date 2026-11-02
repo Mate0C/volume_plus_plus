@@ -46,7 +46,7 @@ enum class ChevronDir { NONE, UP, DOWN }
 class VolumeSlider(
     context: Context,
     private val style: OverlayStyle,
-    private val icon: Drawable?,
+    icon: Drawable?,
     private val glyph: String?,
     label: String?,
     chevron: ChevronDir,
@@ -81,7 +81,7 @@ class VolumeSlider(
      */
     private val recolorIcon: Boolean = true,
     /** [PILL_LABEL] only: the icon painted once the level reaches zero (e.g. a crossed speaker). */
-    private val mutedIcon: Drawable? = null,
+    mutedIcon: Drawable? = null,
     /**
      * [PILL_LABEL] picker only: explicit colours that override the [style] palette so the output
      * picker can match its own spec — the track (background), the fill, and a single "content"
@@ -285,6 +285,19 @@ class VolumeSlider(
             invalidate()
         }
 
+    /** The stream's icon, and the one drawn instead once the level reaches zero. Swappable so a panel
+     *  can change them live, as when a headset connects while it is open. */
+    var icon: Drawable? = icon
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var mutedIcon: Drawable? = mutedIcon
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     /**
      * The trailing expand/collapse chevron's direction. Mutable so a panel can flip it (DOWN⇄UP)
      * in place when it expands/collapses instead of rebuilding the row — the width it reserves is
@@ -298,6 +311,10 @@ class VolumeSlider(
 
     private val density = context.resources.displayMetrics.density
     private fun dp(v: Float) = v * density * OVERLAY_SCALE
+
+    /** Exact dp, without the overlay's uniform shrink: the handle slider is drawn to the numbers in
+     *  Android's own volume dialog, which a shrunk copy would no longer match. */
+    private fun dpe(v: Float) = v * density
 
     // NOTE: use also{it...} not apply{} — inside apply the receiver's own `style` member (Paint.style)
     // would shadow our `style` constructor param.
@@ -374,7 +391,7 @@ class VolumeSlider(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         // A handle slider is wider than its track: the bar stands proud of it on both sides.
-        val thickness = maxOf(dp(style.pillThicknessDp.toFloat()), if (handle) dp(HANDLE_HEIGHT_DP) else 0f).toInt()
+        val thickness = maxOf(dp(style.pillThicknessDp.toFloat()), if (handle) dpe(HANDLE_HEIGHT_DP) else 0f).toInt()
         val length = dp(style.pillLengthDp.toFloat()).toInt()
         when {
             vertical && fill -> setMeasuredDimension(thickness, MeasureSpec.getSize(heightMeasureSpec))
@@ -733,12 +750,12 @@ class VolumeSlider(
         val w = width.toFloat()
         val h = height.toFloat()
         val cy = h / 2f
-        val trackH = dp(HANDLE_TRACK_DP)
-        val barW = dp(HANDLE_WIDTH_DP)
-        val barH = minOf(dp(HANDLE_HEIGHT_DP), h)
-        val gap = dp(HANDLE_GAP_DP)
+        val trackH = dpe(HANDLE_TRACK_DP)
+        val barW = dpe(HANDLE_WIDTH_DP)
+        val barH = minOf(dpe(HANDLE_HEIGHT_DP), h)
+        val gap = dpe(HANDLE_GAP_DP)
         val big = trackH / 2f
-        val small = dp(4f)
+        val small = dpe(HANDLE_VERTICAL_FACING_DP)
 
         val inactive = !sliderEnabled || dimmed
         val fillColor = if (inactive) style.inactiveColor else (fillOverride ?: style.fillColor)
@@ -783,7 +800,7 @@ class VolumeSlider(
         canvas.drawRoundRect(bounds, barW / 2f, barW / 2f, thumbPaint)
 
         val iconCx = w - big
-        val iconSize = dp(ICON_DP)
+        val iconSize = dpe(ICON_DP)
         val overFill = fillRight >= iconCx + iconSize / 2f
         val onFill = style.pillContentOnFill ?: contrastOn(fillColor)
         val onTrack = style.pillContentOnTrack ?: style.iconTint
@@ -799,12 +816,12 @@ class VolumeSlider(
         val w = width.toFloat()
         val h = height.toFloat()
         val cx = w / 2f
-        val trackW = dp(HANDLE_TRACK_DP)
-        val barT = dp(HANDLE_VERTICAL_BAR_DP)
-        val barW = minOf(dp(HANDLE_HEIGHT_DP), w)
-        val gap = dp(HANDLE_GAP_DP)
-        val big = dp(HANDLE_VERTICAL_RADIUS_DP)
-        val small = dp(HANDLE_VERTICAL_FACING_DP)
+        val trackW = dpe(HANDLE_TRACK_DP)
+        val barT = dpe(HANDLE_VERTICAL_BAR_DP)
+        val barW = minOf(dpe(HANDLE_HEIGHT_DP), w)
+        val gap = dpe(HANDLE_GAP_DP)
+        val big = dpe(HANDLE_VERTICAL_RADIUS_DP)
+        val small = dpe(HANDLE_VERTICAL_FACING_DP)
 
         val inactive = !sliderEnabled || dimmed
         val fillColor = if (inactive) style.inactiveColor else (fillOverride ?: style.fillColor)
@@ -832,8 +849,8 @@ class VolumeSlider(
         bounds.set(cx - barW / 2f, y - barT / 2f, cx + barW / 2f, y + barT / 2f)
         canvas.drawRoundRect(bounds, barT / 2f, barT / 2f, thumbPaint)
 
-        val iconSize = dp(ICON_DP)
-        val iconCy = dp(HANDLE_VERTICAL_ICON_DP)
+        val iconSize = dpe(ICON_DP)
+        val iconCy = dpe(HANDLE_VERTICAL_ICON_DP)
         val overFill = fillTop <= iconCy - iconSize / 2f
         drawIcon(
             canvas, cx, iconCy, iconSize, overFill,
@@ -1043,8 +1060,8 @@ class VolumeSlider(
     private fun updateFromTouch(event: MotionEvent) {
         if (!sliderEnabled) return
         val newLevel = when {
-            handle && !vertical -> (event.x - dp(HANDLE_WIDTH_DP) / 2f) / (width - dp(HANDLE_WIDTH_DP))
-            handle -> 1f - (event.y - dp(HANDLE_VERTICAL_BAR_DP) / 2f) / (height - dp(HANDLE_VERTICAL_BAR_DP))
+            handle && !vertical -> (event.x - dpe(HANDLE_WIDTH_DP) / 2f) / (width - dpe(HANDLE_WIDTH_DP))
+            handle -> 1f - (event.y - dpe(HANDLE_VERTICAL_BAR_DP) / 2f) / (height - dpe(HANDLE_VERTICAL_BAR_DP))
             lineThumb && vertical -> (trackBottom() - event.y) / (trackBottom() - trackTop())
             lineThumb -> (event.x - trackLeft()) / (trackRight() - trackLeft())
             vertical -> 1f - event.y / height
@@ -1110,9 +1127,9 @@ class VolumeSlider(
 
         /** The vertical row's outer corners are not fully round, as the horizontal ones are, and its icon
          *  sits this far down from the top of the track. Measured off the stock collapsed panel. */
-        const val HANDLE_VERTICAL_RADIUS_DP = 10f
+        const val HANDLE_VERTICAL_RADIUS_DP = 12f
         const val HANDLE_VERTICAL_FACING_DP = 2f
-        const val HANDLE_VERTICAL_BAR_DP = 5f
+        const val HANDLE_VERTICAL_BAR_DP = 4f
         const val HANDLE_VERTICAL_ICON_DP = 22f
 
         /** How much of the remaining distance to the finger the bar covers each frame at a 100%

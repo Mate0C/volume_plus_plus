@@ -2,6 +2,7 @@ package com.volume_plus_plus.app.service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -282,6 +283,13 @@ class VolumeKeyService : AccessibilityService() {
     }
 
     override fun onInterrupt() { /* not used */ }
+
+    /** The screen turned (or changed size) with the panel up: it is rebuilt for the new display, since
+     *  its window and its slider were sized for the old one. */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        overlay?.onConfigurationChanged()
+    }
 
     /** A build that tears the service down without unbinding it first still has to stop claiming
      *  the service is connected. */

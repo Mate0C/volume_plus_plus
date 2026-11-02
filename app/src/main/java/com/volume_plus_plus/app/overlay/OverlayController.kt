@@ -46,6 +46,7 @@ import androidx.core.graphics.drawable.DrawableCompat
 import com.volume_plus_plus.app.R
 import com.volume_plus_plus.app.data.OverlayCustomizationPrefs
 import com.volume_plus_plus.app.data.OverlayPrefs
+import com.volume_plus_plus.app.audio.BoostPolicy
 import com.volume_plus_plus.app.config.AppSettings
 import com.volume_plus_plus.app.i18n.Localization
 import com.volume_plus_plus.app.privileged.PrivilegedManager
@@ -365,6 +366,61 @@ class OverlayController(
         val icon: Drawable?,
         val piids: List<Int>,
     )
+
+    /** The live boost state of every app row on screen, so a boost dropped from outside (the output
+     *  changing) is redrawn at the next sync rather than left claiming a level that is gone. */
+    private val appBoostUis = HashMap<String, AppBoostUi>()
+
+    /**
+     * The above-100% state of one app's row. With the app booster on, the row's slider has room for a
+     * boost after its 100% mark; this hands what the finger does there to
+     * [AppVolumeController.setBoost] and shows the result in the app's name, where the skin has one.
+     * Rows of an editor are inert.
+     */
+    private inner class AppBoostUi(private val app: AppPlayers) {
+        private var slider: VolumeSlider? = null
+        private var relabel: ((String) -> Unit)? = null
+
+        /** [relabel] receives the app's name with its boost on it; defaults to the slider's own label. */
+        fun bind(slider: VolumeSlider, relabel: ((String) -> Unit)? = null) {
+            this.slider = slider
+            this.relabel = relabel
+            appBoostUis[app.pkg] = this
+            if (!isEditor()) slider.onBoostChange = { steps -> change(steps) }
+            refresh(syncBar = true)
+        }
+
+        private fun change(steps: Int) {
+            val before = appVolume.boostFor(app.pkg)
+            val after = appVolume.setBoost(app.pkg, steps, app.piids)
+            // A notch is a step like any other, so it ticks the way a volume step does.
+            if (after != before && prefs.isHoldStepHapticsEnabled()) {
+                StepHaptics.play(vibrator, prefs.getHoldStepHapticIntensity())
+            }
+            refresh()
+        }
+
+        /**
+         * Redraw the name for the boost now in effect. With [syncBar] the bar itself is brought in line
+         * too — the room it has, and where it sits — for a boost that changed without a finger (the
+         * output switched, the setting was turned off); never while a finger is on it.
+         */
+        fun refresh(syncBar: Boolean = false) {
+            val s = slider ?: return
+            val steps = if (isEditor()) 0 else appVolume.boostFor(app.pkg)
+            if (syncBar && !s.isDragging) {
+                s.boostMaxSteps = if (isEditor()) 0 else appVolume.maxBoostSteps()
+                s.setLevels(appVolume.volumeFor(app.pkg), steps)
+            }
+            val name = if (steps > 0) {
+                "${app.label} · ${strings.percent(BoostPolicy.percent(steps))}"
+            } else {
+                app.label
+            }
+            val out = relabel
+            if (out != null) out(name) else if (s.label != null) s.label = name
+        }
+    }
 
     /**
      * Nudge the media stream in [direction] (+1 up, -1 down), then show/refresh the panel. Returns
@@ -1968,14 +2024,17 @@ class OverlayController(
         startAppSync(container) { app ->
             // Android 7 rows are icon-only, so app rows drop their name label too.
             val label = if (isSeven()) null else app.label
+            val boost = AppBoostUi(app)
             makeSlider(app.icon, glyph = null, label, ChevronDir.NONE, onChevron = {}, pressedHalo = true) { level ->
                 appDragHaptic(app.pkg, level)
                 appVolume.setVolume(app.pkg, level, app.piids)
+                boost.refresh()
             }.apply {
                 // Start at the level remembered for this playback session (full for a fresh one).
                 level = appVolume.volumeFor(app.pkg)
                 layoutParams = pillParams(first = false)
                 onDragStateChange = { dragging -> if (dragging) selectGenericRow(this) }
+                boost.bind(this)
             }
         }
     }
@@ -2367,6 +2426,7 @@ class OverlayController(
 
     private fun load911Apps(container: LinearLayout) {
         startAppSync(container) { app ->
+            val boost = AppBoostUi(app)
             val slider = makeSlider(
                 icon = null, glyph = null, label = null, chevron = ChevronDir.NONE, onChevron = {},
                 orientation = SliderOrientation.HORIZONTAL, fill = true, reserveTrailing = false,
@@ -2374,10 +2434,12 @@ class OverlayController(
             ) { level ->
                 appDragHaptic(app.pkg, level)
                 appVolume.setVolume(app.pkg, level, app.piids)
+                boost.refresh()
             }
                 .apply { level = appVolume.volumeFor(app.pkg) }
             val icon = ImageView(context).apply { setImageDrawable(app.icon) }
-            val row = row911(icon, app.label, slider)
+            // This sheet names the row in its own text view rather than on the slider.
+            val row = row911(icon, app.label, slider) { name -> boost.bind(slider) { name.text = it } }
             // Wrap row (+ divider on the older sheets) so removing a stopped app takes its divider too.
             LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -2392,7 +2454,13 @@ class OverlayController(
     }
 
     /** A Sound-sheet row: leading icon + (label stacked over a horizontal slider). */
-    private fun row911(icon: ImageView, label: String, slider: View): View {
+    private fun row911(
+        icon: ImageView,
+        label: String,
+        slider: View,
+        /** Handed the row's name view once it exists, for a row whose name has to change in place. */
+        onLabel: ((TextView) -> Unit)? = null,
+    ): View {
         val hideIcon = hideSecondaryIconsLegacy910()
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2413,6 +2481,7 @@ class OverlayController(
             // track line actually starts, instead of sitting a thumb-radius to its left.
             setPadding(dp(9), 0, 0, 0)
         }
+        onLabel?.invoke(tv)
         col.addView(tv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) })
         col.addView(slider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(24)))
         row.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -2847,6 +2916,7 @@ class OverlayController(
 
     private fun loadPillRowApps(container: LinearLayout) {
         startAppSync(container) { app ->
+            val boost = AppBoostUi(app)
             makeSlider(
                 icon = app.icon, glyph = null, label = app.label, chevron = ChevronDir.NONE, onChevron = {},
                 orientation = SliderOrientation.HORIZONTAL, fill = true, reserveTrailing = false,
@@ -2854,11 +2924,13 @@ class OverlayController(
             ) { level ->
                 appDragHaptic(app.pkg, level)
                 appVolume.setVolume(app.pkg, level, app.piids)
+                boost.refresh()
             }
                 .apply {
                     level = appVolume.volumeFor(app.pkg)
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52))
                         .apply { bottomMargin = dp(10) }
+                    boost.bind(this)
                 }
         }
     }
@@ -3833,6 +3905,7 @@ class OverlayController(
         handler.removeCallbacks(appsSyncRunnable)
         appsBox = null
         appBuilder = null
+        appBoostUis.clear()
     }
 
     /**
@@ -3881,6 +3954,9 @@ class OverlayController(
         // Keep the Android 7–8 selection consistent: a just-added app row must start greyed if some
         // other row is the selected one. No-op on skins without a generic selection.
         applyGenericSelection()
+        // A boost can end without a touch (the output changed), so redraw the rows that are left.
+        appBoostUis.keys.retainAll(wanted)
+        appBoostUis.values.forEach { it.refresh(syncBar = true) }
     }
 
     /**

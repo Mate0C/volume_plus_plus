@@ -113,6 +113,26 @@ class OverlayPrefs(context: Context) {
     }
 
     /**
+     * Whether an app's own slider may go past 100%. Its own switch, apart from [isMediaBoostEnabled]:
+     * the two boosts stack, and someone who wants one has not asked for the other. Off by default for
+     * the same reasons — distortion, and hearing at sustained high gain.
+     */
+    fun isAppBoostEnabled(): Boolean = prefs.getBoolean(KEY_APP_BOOST, false)
+
+    fun setAppBoostEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_APP_BOOST, enabled).apply()
+    }
+
+    /** The ceiling of an app's boost, on the same scale and with the same limits as the media one. */
+    fun getAppBoostMaxSteps(): Int = BoostPolicy.normalizeMaxSteps(
+        prefs.getInt(KEY_APP_BOOST_MAX_STEPS, BoostPolicy.DEFAULT_MAX_STEPS),
+    )
+
+    fun setAppBoostMaxSteps(steps: Int) {
+        prefs.edit { putInt(KEY_APP_BOOST_MAX_STEPS, BoostPolicy.normalizeMaxSteps(steps)) }
+    }
+
+    /**
      * Whether a first volume-key press opens the panel straight into its expanded sheet — every
      * stream plus one slider per playing app — instead of the compact panel stock reopens with.
      * Off by default: the skins reproduce the stock panels, and those reopen collapsed.
@@ -187,6 +207,8 @@ class OverlayPrefs(context: Context) {
         const val KEY_REMEMBER_APP_VOLUMES = "remember_app_volumes"
         const val KEY_MEDIA_BOOST = "media_boost"
         const val KEY_MEDIA_BOOST_MAX_STEPS = "media_boost_max_steps"
+        const val KEY_APP_BOOST = "app_boost"
+        const val KEY_APP_BOOST_MAX_STEPS = "app_boost_max_steps"
         const val KEY_HOLD_FOLLOW_SCALE = "hold_follow_scale"
         const val KEY_HOLD_SETTLE_SCALE = "hold_settle_scale"
         const val KEY_HOLD_STEP_HAPTICS = "hold_step_haptics"

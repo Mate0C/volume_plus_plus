@@ -39,6 +39,9 @@ class UserService() : IUserService.Stub() {
     /** The live loudness boost, if one is applied. Held open only while the gain is non-zero. */
     private var enhancer: LoudnessEnhancer? = null
 
+    /** Per-app boosts, one loudness effect per audio session, keyed by session id. */
+    private val playerBoosts = HashMap<Int, LoudnessEnhancer>()
+
     /** The smart-audio-focus policy, created the first time it is asked for. */
     private var focusPolicy: FocusPolicyHost? = null
 
@@ -46,6 +49,7 @@ class UserService() : IUserService.Stub() {
         // Drop the boost before going away. The gain lives in the audio server, not in this
         // process, so leaving it applied would outlast us with no UI left to undo it.
         releaseEnhancer()
+        releasePlayerBoosts()
         // Same for anything the focus policy has ducked: the duck is applied inside the apps' players.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusPolicy?.stop()
         exitProcess(0)
@@ -342,6 +346,51 @@ class UserService() : IUserService.Stub() {
     private fun releaseEnhancer() {
         runCatching { enhancer?.release() }
         enhancer = null
+    }
+
+    /**
+     * Gain for one app only: a loudness effect on the session of the player [piid], so nothing else
+     * on the device gets louder. Where [setLoudnessGain] needs the global mix, an effect on an app's
+     * own session is what the platform lets the shell UID attach.
+     */
+    @Synchronized
+    override fun setPlayerBoost(piid: Int, gainMillibels: Int): String {
+        val ctx = context ?: return "ERROR: no context"
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return "ERROR: needs Android 8 or newer"
+        val gain = BoostPolicy.clampGain(gainMillibels)
+        return try {
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val configs = am.activePlaybackConfigurations
+            // An app's sessions come and go as it swaps players; drop the effects of those that went.
+            val live = configs.mapNotNull { it.invokeInt("getSessionId") }.toSet()
+            playerBoosts.keys.filter { it !in live }.forEach { releasePlayerBoost(it) }
+            val session = configs.firstOrNull { it.invokeInt("getPlayerInterfaceId") == piid }
+                ?.invokeInt("getSessionId")?.takeIf { it != 0 }
+            when {
+                // Nothing left to lower: the player, and with it the effect, is already gone.
+                session == null && gain == 0 -> ""
+                session == null -> "ERROR: no audio session for player $piid"
+                gain == 0 -> { releasePlayerBoost(session); "" }
+                else -> {
+                    val fx = playerBoosts[session]
+                        ?: LoudnessEnhancer(session).also { playerBoosts[session] = it }
+                    fx.setTargetGain(gain)
+                    if (!fx.enabled) fx.enabled = true
+                    ""
+                }
+            }
+        } catch (e: Throwable) {
+            "ERROR: ${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    @Synchronized
+    override fun releasePlayerBoosts() {
+        playerBoosts.keys.toList().forEach { releasePlayerBoost(it) }
+    }
+
+    private fun releasePlayerBoost(session: Int) {
+        runCatching { playerBoosts.remove(session)?.release() }
     }
 
     private fun Any.invokeInt(method: String): Int? =

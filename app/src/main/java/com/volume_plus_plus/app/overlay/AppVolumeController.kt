@@ -1,11 +1,14 @@
 package com.volume_plus_plus.app.overlay
 
 import android.content.Context
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import com.volume_plus_plus.app.audio.BoostPolicy
 import com.volume_plus_plus.app.data.AppVolumePrefs
 import com.volume_plus_plus.app.data.OverlayPrefs
 import com.volume_plus_plus.app.privileged.PrivilegedManager
@@ -51,6 +54,15 @@ import kotlinx.coroutines.launch
  * [sessions] on the main thread only (the coroutine scope is [Dispatchers.Main]; the privileged
  * calls suspend onto IO internally), so no locking is needed.
  *
+ * ## Boost above 100%
+ *
+ * The same session can also carry a *boost*: gain on top of a full volume, applied as a loudness
+ * effect on that app's own audio session so nothing else gets louder (see
+ * [PrivilegedManager.setPlayerBoost]). It has its own switch and ceiling, apart from the media
+ * booster's, and is dropped by anything that makes it unsafe: the slider leaving 100%, the setting
+ * turning off, or the audio output changing. Unlike the volume it is never remembered past the
+ * session, so an app never starts loud on its own.
+ *
  * Per-app playback control needs the Android 8+ playback-configuration APIs, so on older releases
  * this controller stays inert (there are no per-app players to manage anyway).
  */
@@ -75,6 +87,11 @@ class AppVolumeController(context: Context) {
     private class Session(var volume: Float) {
         /** piid -> the volume value last pushed to that player, so we only write on a real change. */
         val applied = HashMap<Int, Float>()
+
+        /** Boost notches on top of a full [volume], 0 when none. Lives and dies with the session. */
+        var boost = 0
+        /** piid -> the boost notches last pushed to that player. Absent means none. */
+        val appliedBoost = HashMap<Int, Int>()
     }
 
     /** Insertion-ordered so the memory cap can evict the oldest dormant session first. */
@@ -96,6 +113,16 @@ class AppVolumeController(context: Context) {
      *  session is picked up promptly even while the panel is closed. */
     private var playbackCallback: AudioManager.AudioPlaybackCallback? = null
 
+    /**
+     * A boost chosen for the phone speaker is a hazard the moment headphones go in, so any change of
+     * output drops every per-app boost — the same rule [MediaBooster] applies to the global one.
+     */
+    private val deviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) = resetBoosts()
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) = resetBoosts()
+    }
+    private var deviceCallbackRegistered = false
+
     // ── lifecycle ─────────────────────────────────────────────────────────────────────────────────
 
     fun start() {
@@ -108,6 +135,8 @@ class AppVolumeController(context: Context) {
         }
         playbackCallback = cb
         runCatching { audioManager.registerAudioPlaybackCallback(cb, handler) }
+        runCatching { audioManager.registerAudioDeviceCallback(deviceCallback, handler) }
+            .onSuccess { deviceCallbackRegistered = true }
         ensurePolling()
     }
 
@@ -119,6 +148,15 @@ class AppVolumeController(context: Context) {
         syncJob = null
         playbackCallback?.let { cb -> runCatching { audioManager.unregisterAudioPlaybackCallback(cb) } }
         playbackCallback = null
+        if (deviceCallbackRegistered) {
+            runCatching { audioManager.unregisterAudioDeviceCallback(deviceCallback) }
+            deviceCallbackRegistered = false
+        }
+        // The gain lives in the audio server, so a boost left applied would outlast this controller
+        // with nothing left to undo it. Off the main scope, which destroy() cancels straight after.
+        if (sessions.values.any { it.appliedBoost.isNotEmpty() }) {
+            CoroutineScope(Dispatchers.IO).launch { PrivilegedManager.releasePlayerBoosts() }
+        }
         sessions.clear()
     }
 
@@ -147,14 +185,69 @@ class AppVolumeController(context: Context) {
         if (prefs.isRememberAppVolumesEnabled()) store.set(pkg, level)
         val session = sessions.getOrPut(pkg) { Session(level) }
         session.volume = level
+        // A boost only ever sits on top of a full volume, so moving off the top drops it.
+        if (level < DEFAULT_VOLUME) session.boost = 0
         // A changed target must be re-pushed to every current player, so forget prior applications.
         session.applied.clear()
         scope.launch {
             for (piid in piids) {
                 if (PrivilegedManager.setPlayerVolume(piid, level)) session.applied[piid] = level
             }
+            applyBoost(session, piids)
         }
         ensurePolling()
+    }
+
+    // ── per-app boost (main thread) ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Whether a boost may be applied at all: switched on in the Overlay tab, and a helper there to
+     * attach the effect. Its own switch, apart from the media booster's — the two stack.
+     */
+    private fun boostAllowed(): Boolean = prefs.isAppBoostEnabled() && PrivilegedManager.isReady
+
+    /** The most boost notches a slider may reach, or 0 while boosting is not available. Read live. */
+    fun maxBoostSteps(): Int = if (boostAllowed()) prefs.getAppBoostMaxSteps() else 0
+
+    /** The boost notches in effect on [pkg], 0 when none (or when boosting is switched off). */
+    fun boostFor(pkg: String): Int =
+        if (boostAllowed()) (sessions[pkg]?.boost ?: 0).coerceAtMost(prefs.getAppBoostMaxSteps()) else 0
+
+    /**
+     * Set [pkg]'s boost to [steps] notches on top of its full volume, and apply it to [piids] now.
+     * The slider only ever asks for a boost past its 100% mark, so a request while the volume is
+     * below full is ignored rather than guessed at. Returns the notches now in effect.
+     */
+    fun setBoost(pkg: String, steps: Int, piids: List<Int>): Int {
+        val session = sessions[pkg] ?: return 0
+        if (!boostAllowed() || session.volume < DEFAULT_VOLUME) return 0
+        session.boost = steps.coerceIn(0, prefs.getAppBoostMaxSteps())
+        scope.launch { applyBoost(session, piids) }
+        ensurePolling()
+        return session.boost
+    }
+
+    /** Push [session]'s boost to each of [piids] that doesn't already have it. */
+    private suspend fun applyBoost(session: Session, piids: List<Int>) {
+        val steps = if (boostAllowed()) session.boost.coerceAtMost(prefs.getAppBoostMaxSteps()) else 0
+        for (piid in piids) {
+            if ((session.appliedBoost[piid] ?: 0) == steps) continue
+            if (PrivilegedManager.setPlayerBoost(piid, BoostPolicy.gain(steps))) {
+                if (steps == 0) session.appliedBoost.remove(piid) else session.appliedBoost[piid] = steps
+            }
+        }
+    }
+
+    /** Drop every boost: an output change, or the switch being turned off. */
+    private fun resetBoosts() {
+        // The platform reports the current devices as soon as a callback is registered, and most
+        // changes find nothing boosted, so don't wake the helper for no reason.
+        if (sessions.values.none { it.boost > 0 || it.appliedBoost.isNotEmpty() }) return
+        for (session in sessions.values) session.boost = 0
+        scope.launch {
+            PrivilegedManager.releasePlayerBoosts()
+            sessions.values.forEach { it.appliedBoost.clear() }
+        }
     }
 
     // ── re-apply loop ───────────────────────────────────────────────────────────────────────────────
@@ -251,6 +344,11 @@ class AppVolumeController(context: Context) {
                     }
                 }
             }
+            // The boost rides on the same loop, so a player an app swaps in (a seek does this) is
+            // lifted again as soon as it appears. With the setting off, a leftover boost is taken down.
+            session.appliedBoost.keys.retainAll(piids.toHashSet())
+            if (!boostAllowed()) session.boost = 0
+            applyBoost(session, piids)
         }
 
         // Dormant packages (a session but not currently playing). Keep the memory while the app's
@@ -264,6 +362,7 @@ class AppVolumeController(context: Context) {
                 // Alive but silent: clear applied piids so a resume re-pushes to whatever new players
                 // appear, and keep the remembered volume untouched.
                 sessions[pkg]?.applied?.clear()
+                sessions[pkg]?.appliedBoost?.clear()
             }
         }
 

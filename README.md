@@ -65,6 +65,14 @@ never individual apps. Volume++ replaces that panel outright and fills in both g
   and material, and higher gain can distort. A *held* key never engages it — only deliberate
   presses — and it clears itself when you
   drop below 100% or change audio output.
+- **An app volume booster**, off by default and separate from the media one, with its own
+  **Maximum app boost** (120–150%). With it on, each app's slider has a mark at 100% and room
+  after it, in the same 5-point notches: drag past the mark to boost just that app, through a
+  loudness effect on its own audio session. The stretch past the mark is amber and the app's name
+  shows the percentage; dropping below the mark or changing output clears it, and it is never
+  remembered past the playback session. Needs Shizuku or root. It adds real gain to quiet sound
+  (a soft video, a podcast, a call), but music already mastered to full scale has no headroom, so
+  it gets little louder and can sound squashed.
 - **Four languages**, picked in the app or followed from the device: English, Español, Português
   and Français.
 
@@ -150,7 +158,8 @@ Volume++ instead of Android's Sound settings. The motion and haptics sliders car
 − / + steppers as the Volume tab, so each can be set to an exact percentage.
 
 It also holds the **media volume booster** switch (off by default, with the clipping and hearing
-warning behind its ⓘ) and its **maximum boosted volume**, the switch for **remembering each app's
+warning behind its ⓘ) and its **maximum boosted volume**, the same pair for the **app volume
+booster** and **maximum app boost**, the switch for **remembering each app's
 volume** across restarts, **Open the panel expanded**, **App sliders first**, an optional **Live
 Caption button** for the panel (offered only on devices that have Live Caption), and the button
 that adds the **Volume Panel** Quick Settings tile — a way to open the panel that doesn't involve
@@ -443,6 +452,9 @@ perfectly usable — adding a language is two edits, documented in [docs/TRANSLA
   lending out the accessibility service's own controller whenever that service is running.
 - **`MediaBooster` / `BoostBar`** — the above-100% gain (a `LoudnessEnhancer` on the global output
   mix, applied through the privileged service) and the bar that draws it above the media slider.
+  A boost for one app is a second effect on that app's own audio session, kept by
+  `AppVolumeController` beside the volume it sits on; `BoostTrack` is the pure arithmetic of the
+  slider's 100% mark and notches.
 - **`StepHaptics`** — the one tuned buzz behind every volume step, shared by the held-key repeat
   and by slider drags so both feel identical at any intensity.
 - **`ScreenColorPicker` / `ColorPickService`** — the eyedropper. A `mediaProjection` foreground

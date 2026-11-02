@@ -514,8 +514,8 @@ object PrivilegedManager {
             .debuggable(false)
             // Bump whenever UserService's interface changes so Shizuku restarts a fresh service
             // instead of reusing a cached older one (v6 adds the audio-focus, Live Caption and
-            // media-session calls; v7 the smart audio-focus policy).
-            .version(7)
+            // media-session calls; v7 the smart audio-focus policy; v8 the per-app boost).
+            .version(8)
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -784,6 +784,31 @@ object PrivilegedManager {
                 false
             }
         }
+
+    /**
+     * Raise one player's app above its own maximum with [gainMillibels] of gain (0 removes it).
+     * Returns true when the effect is in place, or already gone for a zero gain.
+     */
+    suspend fun setPlayerBoost(piid: Int, gainMillibels: Int): Boolean =
+        withContext(Dispatchers.IO) {
+            val svc = service ?: return@withContext false
+            try {
+                svc.setPlayerBoost(piid, gainMillibels).isEmpty()
+            } catch (e: RemoteException) {
+                false
+            }
+        }
+
+    /** Take every per-app boost down; the gain lives in the audio server, not in this process. */
+    suspend fun releasePlayerBoosts() {
+        withContext(Dispatchers.IO) {
+            try {
+                service?.releasePlayerBoosts()
+            } catch (e: RemoteException) {
+                // The service is gone, and its own teardown releases the effects.
+            }
+        }
+    }
 
     /** One active media session, as reported by the privileged service (which the shell/root UID
      *  lets read MediaSessionManager where the app's own UID cannot). [bundle] is the raw session

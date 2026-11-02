@@ -282,6 +282,24 @@ open class Strings {
     open fun overlayMediaBoostValue(maxPercent: Int, gainMillibels: Int) =
         "${percent(maxPercent)} · +${boostDecibels(gainMillibels)} dB"
 
+    open val overlayAppBoost get() = "App volume booster"
+    open fun overlayAppBoostDetail(maxPercent: Int) =
+        "Leaves room on each app's slider after 100% — up to ${percent(maxPercent)}."
+    open fun overlayAppBoostInfo(gainMillibels: Int) =
+        "The booster adds up to ${boostDecibels(gainMillibels)} dB of gain to one app, on top of a " +
+            "volume that is already at 100%, through a loudness effect on that app's audio. It helps " +
+            "quiet sound: a soft video, a podcast, a call. Music mastered at full scale has no room " +
+            "left, so it gets little louder and can sound squashed.\n\n" +
+            "Be careful with headphones: sustained listening at boosted volume can damage your " +
+            "hearing. The boost clears itself whenever you drop below 100% or change audio output, " +
+            "and is not remembered between playbacks. It needs Shizuku or root."
+    open val overlayAppBoostLimit get() = "Maximum app boost"
+    open val overlayAppBoostLimitInfo get() =
+        "Sets the ceiling, not the current boost: the room after 100% on an app's slider ends " +
+            "here. Lowering it immediately limits an active boost.\n\n" +
+            "Each 5 percentage points represents 1.5 dB of target gain, not a linear amplitude " +
+            "percentage. The actual increase depends on the device and audio."
+
     protected fun boostDecibels(gainMillibels: Int): String =
         java.text.DecimalFormat("0.#").format(gainMillibels / 100.0)
 

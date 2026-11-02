@@ -85,6 +85,10 @@ class AppVolumeController(context: Context) {
     /** True while the next scheduled tick is on the slow (dormant) cadence, so a playback change can
      *  bring it forward — a resume shouldn't wait the full dormant interval to be re-applied. */
     private var dormantWait = false
+    /** True while a pass pulled forward by [wake] is still waiting to run, so a burst of callbacks
+     *  (a seek releases one player and starts another within a few milliseconds) is coalesced into
+     *  that one pass instead of pushing it back each time. */
+    private var wakePending = false
     private var syncJob: Job? = null
     private val pollRunnable = Runnable { sync() }
 
@@ -164,21 +168,23 @@ class AppVolumeController(context: Context) {
     }
 
     /**
-     * A device playback change fired: start the loop if idle, or — if it was only waiting on the slow
-     * dormant cadence — bring the next pass forward, since a change while dormant is most likely a
-     * paused app resuming and we want to re-apply its volume promptly rather than after the interval.
+     * A device playback change fired: start the loop if idle, otherwise bring the next pass forward.
+     * While dormant that is most likely a paused app resuming; while playing it is usually an app
+     * swapping its player for a new one (a seek does this), which starts at full volume — either way
+     * we want the remembered level re-applied promptly rather than after the interval.
      */
     private fun wake() {
         if (!running) return
         if (!polling) { ensurePolling(); return }
-        if (dormantWait) {
-            dormantWait = false
-            handler.removeCallbacks(pollRunnable)
-            handler.postDelayed(pollRunnable, WAKE_DELAY_MS)
-        }
+        if (wakePending) return
+        wakePending = true
+        dormantWait = false
+        handler.removeCallbacks(pollRunnable)
+        handler.postDelayed(pollRunnable, WAKE_DELAY_MS)
     }
 
     private fun sync() {
+        wakePending = false
         handler.removeCallbacks(pollRunnable)
         if (!running || !PrivilegedManager.isReady) {
             // Nothing we can do without the privileged link; retry shortly while we still hold state.
@@ -281,9 +287,10 @@ class AppVolumeController(context: Context) {
          *  either resume (the callback also wakes us) or its process die, neither of which is urgent. */
         const val POLL_DORMANT_MS = 4000L
 
-        /** Short delay after a playback change preempts a dormant wait, so a resume is re-applied
-         *  almost at once while still coalescing a burst of config-change callbacks into one pass. */
-        const val WAKE_DELAY_MS = 150L
+        /** Short delay after a playback change preempts the wait for the next pass, so a resume or a
+         *  swapped player is re-applied almost at once while still coalescing a burst of
+         *  config-change callbacks into one pass. */
+        const val WAKE_DELAY_MS = 40L
 
         /** Cap on remembered sessions, so a stuck liveness check can't leak them without bound. */
         const val MAX_SESSIONS = 12

@@ -514,8 +514,8 @@ object PrivilegedManager {
             .debuggable(false)
             // Bump whenever UserService's interface changes so Shizuku restarts a fresh service
             // instead of reusing a cached older one (v6 adds the audio-focus, Live Caption and
-            // media-session calls).
-            .version(6)
+            // media-session calls; v7 the smart audio-focus policy).
+            .version(7)
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -525,6 +525,7 @@ object PrivilegedManager {
                 service = IUserService.Stub.asInterface(binder)
                 connectFailed = false
                 publish()
+                restoreFocusPolicy()
             } else {
                 bindFailed()
             }
@@ -701,6 +702,38 @@ object PrivilegedManager {
                 false
             }
         }
+
+    /**
+     * Turn smart audio focus on or off, or hand it a new list of [mixedPackages] while on. See
+     * `IUserService.setFocusPolicy`. False means the platform refused or the service isn't there, and
+     * the caller should leave the switch where it was.
+     */
+    suspend fun setFocusPolicy(
+        enabled: Boolean,
+        mixedPackages: Set<String>,
+        pauseInsteadOfDuck: Boolean,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val svc = service ?: return@withContext false
+            try {
+                !svc.setFocusPolicy(enabled, mixedPackages.toList(), pauseInsteadOfDuck)
+                    .startsWith("ERROR")
+            } catch (e: RemoteException) {
+                false
+            }
+        }
+
+    /**
+     * The focus policy lives in the privileged process and ends with it, so a fresh process starts
+     * without it: Shizuku was restarted, or the process was killed. Put it back from what the user
+     * chose, so a restart is invisible apart from the moment it takes.
+     */
+    private fun restoreFocusPolicy() {
+        val saved = prefs?.takeIf { it.isSmartFocusEnabled() } ?: return
+        scope.launch {
+            setFocusPolicy(true, saved.enabledPackages(), saved.isPauseInsteadOfDuck())
+        }
+    }
 
     /**
      * Toggle Live Caption by writing its Secure flag from the privileged process — the same flag

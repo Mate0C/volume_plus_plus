@@ -49,8 +49,28 @@ class MixPrefs(context: Context) {
         prefs.edit().putBoolean(KEY_USE_ROOT, useRoot).apply()
     }
 
+    /**
+     * Whether mixing runs through the smart audio-focus policy instead of the `TAKE_AUDIO_FOCUS`
+     * app-op. The switches in [enabledPackages] mean the same either way; this only picks what
+     * carries them out.
+     */
+    fun isSmartFocusEnabled(): Boolean = prefs.getBoolean(KEY_SMART_FOCUS, false)
+
+    fun setSmartFocusEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SMART_FOCUS, enabled).apply()
+    }
+
+    /** Whether a voice prompt pauses the music it would otherwise lower the volume of. */
+    fun isPauseInsteadOfDuck(): Boolean = prefs.getBoolean(KEY_PAUSE_INSTEAD_OF_DUCK, false)
+
+    fun setPauseInsteadOfDuck(pause: Boolean) {
+        prefs.edit().putBoolean(KEY_PAUSE_INSTEAD_OF_DUCK, pause).apply()
+    }
+
     private companion object {
         const val KEY_ENABLED = "enabled"
+        const val KEY_SMART_FOCUS = "smart_focus"
+        const val KEY_PAUSE_INSTEAD_OF_DUCK = "pause_instead_of_duck"
         const val KEY_WARNING_DISMISSED = "warning_dismissed"
         const val KEY_USE_ROOT = "use_root"
     }

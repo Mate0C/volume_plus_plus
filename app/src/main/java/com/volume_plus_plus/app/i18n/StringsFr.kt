@@ -85,6 +85,27 @@ object FrenchStrings : Strings() {
             "les paramètres du panneau."
     override val mixingGoToOverlaySettings get() = "Aller aux paramètres du panneau"
 
+    // ── focus audio intelligent ─────────────────────────────────────────────────────────────────
+
+    override val focusTitle get() = "Focus audio intelligent"
+    override val focusSubtitle get() = "Mixez les applis ci-dessous sans gêner les appels ni les annonces vocales"
+    override val focusInfo get() =
+        "Au lieu d'empêcher une appli de prendre le focus audio, Volume++ répond lui-même à chaque " +
+            "demande de focus. Les applis activées ci-dessous jouent ensemble ; tout le reste se " +
+            "comporte comme Android le ferait. Les appels et les sonneries gardent toujours la main, " +
+            "la musique qui tente de démarrer pendant un appel attend qu'il se termine, et une " +
+            "annonce vocale comme la navigation baisse la musique puis la rend. Les applis gardent " +
+            "leurs commandes de pause et de reprise : rien ne se fige.\n\n" +
+            "Seules les applis qui démarrent après l'activation sont gérées : relancez la lecture " +
+            "dans une appli qui jouait déjà."
+    override val focusPauseTitle get() = "Pause pendant les annonces vocales"
+    override val focusPauseSubtitle get() = "Mettre la musique en pause au lieu de la baisser"
+    override val focusPauseInfo get() =
+        "Quand une annonce vocale parle par-dessus votre musique, celle-ci baisse d'ordinaire de " +
+            "volume puis revient. Activez ceci pour la mettre en pause pendant l'annonce et " +
+            "l'entendre seule."
+    override val focusCouldntChange get() = "Impossible de modifier le focus audio intelligent sur cet appareil"
+
     // ── liste de configuration ──────────────────────────────────────────────────────────────────
 
     override val setupIntroRooted get() =
